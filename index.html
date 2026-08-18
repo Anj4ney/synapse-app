@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Synapse — AI Learning Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+<style>
+  :root{
+    --ink:#1B2340;
+    --ink-2:#2A3363;
+    --paper:#F4F6FB;
+    --paper-2:#FFFFFF;
+    --gold:#E8A33D;
+    --gold-2:#C97C1F;
+    --line:#DDE2F0;
+    --muted:#5B6488;
+    --success:#3FA66B;
+    --danger:#C3492F;
+    --radius:14px;
+    --shadow: 0 1px 2px rgba(27,35,64,0.06), 0 8px 24px rgba(27,35,64,0.08);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+  }
+  h1,h2,h3,.display{
+    font-family:'Fraunces',serif;
+    font-weight:600;
+    letter-spacing:-0.01em;
+    color:var(--ink);
+    margin:0;
+  }
+  .mono{font-family:'IBM Plex Mono',monospace;letter-spacing:0.02em;}
+  .hidden{display:none !important;}
+  button{font-family:inherit;cursor:pointer;}
+  a{color:var(--gold-2);}
+  input,textarea{font-family:'Inter',sans-serif;}
+
+  /* ---------- Topbar ---------- */
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 32px;background:var(--paper-2);border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:20;
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Fraunces',serif;font-weight:600;font-size:19px;color:var(--ink);}
+  .brand .dot{width:9px;height:9px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 4px rgba(232,163,61,0.18);}
+  .topbar-right{display:flex;align-items:center;gap:18px;}
+  .user-chip{display:flex;align-items:center;gap:10px;}
+  .avatar{width:32px;height:32px;border-radius:50%;background:var(--ink-2);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;}
+  .link-btn{background:none;border:none;color:var(--muted);font-size:14px;padding:6px 4px;border-bottom:1px solid transparent;}
+  .link-btn:hover{color:var(--ink);border-color:var(--line);}
+  .link-btn:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible{outline:2px solid var(--gold-2);outline-offset:2px;}
+
+  /* ---------- Buttons ---------- */
+  .btn{
+    border:none;border-radius:10px;padding:12px 20px;font-size:14.5px;font-weight:600;
+    display:inline-flex;align-items:center;gap:8px;transition:transform .12s ease, box-shadow .12s ease;
+  }
+  .btn-primary{background:var(--gold);color:#221607;}
+  .btn-primary:hover{background:var(--gold-2);color:#fff;}
+  .btn-primary:disabled{opacity:.55;cursor:not-allowed;}
+  .btn-ghost{background:transparent;color:var(--ink);border:1px solid var(--line);}
+  .btn-ghost:hover{border-color:var(--ink-2);}
+  .btn-sm{padding:8px 14px;font-size:13px;}
+
+  /* ---------- Views ---------- */
+  .view{width:100%;}
+
+  /* AUTH VIEW */
+  .auth-view{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr;}
+  @media(max-width:860px){.auth-view{grid-template-columns:1fr;}}
+  .auth-brand{
+    background:radial-gradient(1200px 800px at 15% -10%, #2A3363 0%, #1B2340 55%, #141A31 100%);
+    color:#EEF0FA;padding:56px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;
+  }
+  .auth-brand h1{color:#fff;font-size:40px;line-height:1.15;max-width:460px;}
+  .auth-brand .tag{color:var(--gold);font-size:13px;text-transform:uppercase;letter-spacing:.14em;margin-bottom:18px;}
+  .auth-brand p.sub{color:#B7BEDD;max-width:420px;font-size:15.5px;line-height:1.6;margin-top:14px;}
+  .constellation-wrap{margin-top:30px;}
+  .auth-form-side{display:flex;align-items:center;justify-content:center;padding:40px;background:var(--paper);}
+  .auth-card{width:100%;max-width:380px;}
+  .tabs{display:flex;gap:4px;background:var(--paper-2);border:1px solid var(--line);border-radius:12px;padding:4px;margin-bottom:24px;}
+  .tab{flex:1;text-align:center;padding:9px 0;border-radius:9px;border:none;background:transparent;font-size:14px;font-weight:600;color:var(--muted);}
+  .tab.active{background:var(--ink);color:#fff;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;}
+  .field input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;font-size:14.5px;background:#fff;color:var(--ink);}
+  .field input:focus{border-color:var(--gold-2);}
+  .form-error{background:#FDEEE9;color:var(--danger);border:1px solid #F3CDBE;padding:10px 12px;border-radius:9px;font-size:13.5px;margin-bottom:14px;}
+  .disclaimer{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.5;}
+
+  /* DASHBOARD VIEW */
+  .dash-wrap{max-width:1080px;margin:0 auto;padding:40px 28px 80px;}
+  .seed-panel{
+    background:linear-gradient(135deg,#1B2340 0%,#2A3363 100%);border-radius:20px;padding:36px;color:#fff;
+    display:flex;flex-direction:column;gap:16px;margin-bottom:44px;position:relative;overflow:hidden;
+  }
+  .seed-panel .eyebrow{color:var(--gold);font-size:12.5px;text-transform:uppercase;letter-spacing:.14em;}
+  .seed-panel h2{color:#fff;font-size:27px;max-width:560px;line-height:1.3;}
+  .seed-form{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;}
+  .seed-form input{
+    flex:1;min-width:220px;padding:14px 16px;border-radius:10px;border:1px solid rgba(255,255,255,0.25);
+    background:rgba(255,255,255,0.08);color:#fff;font-size:15px;
+  }
+  .seed-form input::placeholder{color:#AEB5D6;}
+  .seed-form input:focus{border-color:var(--gold);background:rgba(255,255,255,0.13);}
+  .gen-status{display:flex;align-items:center;gap:12px;margin-top:6px;font-size:13.5px;color:#CDD3EE;}
+
+  .section-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:16px;}
+  .section-head h3{font-size:20px;}
+  .count-badge{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);}
+
+  .course-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:18px;}
+  .course-card{
+    background:var(--paper-2);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:10px;
+    box-shadow:var(--shadow);transition:transform .15s ease;
+  }
+  .course-card:hover{transform:translateY(-2px);}
+  .course-card h4{font-size:17px;line-height:1.35;}
+  .course-card p{font-size:13.5px;color:var(--muted);line-height:1.5;margin:0;flex:1;}
+  .progress-track{height:6px;background:var(--line);border-radius:4px;overflow:hidden;}
+  .progress-fill{height:100%;background:var(--gold);}
+  .card-footer{display:flex;align-items:center;justify-content:space-between;margin-top:4px;}
+  .icon-btn{background:none;border:none;color:var(--muted);font-size:12.5px;}
+  .icon-btn:hover{color:var(--danger);}
+  .empty-state{border:1px dashed var(--line);border-radius:16px;padding:44px;text-align:center;color:var(--muted);}
+  .empty-state h4{color:var(--ink);margin-bottom:6px;}
+
+  /* COURSE VIEW */
+  .course-wrap{max-width:1120px;margin:0 auto;padding:32px 28px 80px;}
+  .course-head{margin-bottom:26px;}
+  .course-head h2{font-size:30px;line-height:1.25;max-width:760px;}
+  .course-head p{color:var(--muted);margin-top:8px;max-width:680px;line-height:1.55;}
+  .course-body{display:grid;grid-template-columns:270px 1fr;gap:32px;align-items:start;}
+  @media(max-width:800px){.course-body{grid-template-columns:1fr;}}
+  .module-rail{position:sticky;top:80px;border:1px solid var(--line);border-radius:14px;background:var(--paper-2);overflow:hidden;}
+  .module-item{
+    display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-bottom:1px solid var(--line);background:none;border-left:3px solid transparent;
+    width:100%;text-align:left;
+  }
+  .module-item:last-child{border-bottom:none;}
+  .module-item.active{background:#FBF3E6;border-left-color:var(--gold);}
+  .module-num{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);min-width:20px;padding-top:1px;}
+  .module-title{font-size:14px;font-weight:600;line-height:1.4;}
+  .module-check{margin-left:auto;font-size:14px;color:var(--success);}
+  .module-main{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:32px;}
+  .module-main h3{font-size:23px;margin-bottom:18px;}
+  .notes{line-height:1.7;font-size:15px;color:#2B3358;}
+  .notes h1,.notes h2,.notes h3{font-family:'Fraunces',serif;font-size:18px;margin:20px 0 8px;}
+  .notes ul{padding-left:20px;}
+  .notes p{margin:0 0 12px;}
+  .video-block{margin-top:26px;}
+  .video-block .label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;font-weight:600;}
+  .video-frame{position:relative;padding-top:56.25%;background:#EAEDF7;border-radius:12px;overflow:hidden;border:1px solid var(--line);}
+  .video-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:none;}
+  .video-fallback{font-size:12.5px;margin-top:8px;color:var(--muted);}
+  .module-actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:20px;border-top:1px solid var(--line);}
+
+  /* Constellation loader */
+  .constellation{width:100%;max-width:420px;}
+  .constellation svg{width:100%;height:auto;display:block;}
+  .cst-line{stroke:var(--gold);stroke-width:1.4;fill:none;stroke-dasharray:120;stroke-dashoffset:120;animation:draw 900ms ease forwards;}
+  .cst-node{fill:#2A3363;stroke:var(--gold);stroke-width:1.2;opacity:0;animation:pop 500ms ease forwards;}
+  .cst-node.center{fill:var(--gold);animation:pulse 1.8s ease-in-out infinite;}
+  @keyframes draw{to{stroke-dashoffset:0;}}
+  @keyframes pop{to{opacity:1;}}
+  @keyframes pulse{0%,100%{r:9;}50%{r:11.5;}}
+  @media (prefers-reduced-motion: reduce){
+    .cst-line,.cst-node,.cst-node.center{animation:none !important;opacity:1;stroke-dashoffset:0;}
+  }
+  .spinner-dot{width:8px;height:8px;border-radius:50%;background:var(--gold);animation:blink 1s infinite ease-in-out;}
+  @keyframes blink{0%,100%{opacity:.25;}50%{opacity:1;}}
+
+  .footer-note{text-align:center;color:var(--muted);font-size:12px;margin-top:40px;}
+
+  /* Course actions row */
+  .course-actions-row{display:flex;gap:10px;margin:14px 0 22px;flex-wrap:wrap;}
+  .btn-toggle-on{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+  /* Editable header fields */
+  .edit-title-input{
+    width:100%;font-family:'Fraunces',serif;font-size:28px;font-weight:600;color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:#fff;
+  }
+  .edit-desc-input{
+    width:100%;font-family:'Inter',sans-serif;font-size:14.5px;color:var(--ink);
+    border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-top:10px;resize:vertical;min-height:52px;background:#fff;
+  }
+
+  /* Module rail edit controls */
+  .module-item.edit-row{align-items:center;gap:8px;}
+  .rail-reorder{display:flex;flex-direction:column;gap:2px;}
+  .rail-reorder button{background:none;border:none;color:var(--muted);font-size:11px;line-height:1;padding:2px;}
+  .rail-reorder button:hover{color:var(--ink);}
+  .rail-reorder button:disabled{opacity:.25;cursor:not-allowed;}
+  .rail-del{background:none;border:none;color:var(--muted);font-size:12px;margin-left:auto;}
+  .rail-del:hover{color:var(--danger);}
+  .add-lesson-form{padding:14px 16px;display:flex;flex-direction:column;gap:8px;}
+  .add-lesson-form input{padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;}
+
+  /* Module main edit view */
+  .edit-field{margin-bottom:14px;}
+  .edit-field label{display:block;font-size:11.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;}
+  .edit-field input, .edit-field textarea{
+    width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 13px;font-size:14.5px;font-family:'Inter',sans-serif;background:#fff;color:var(--ink);
+  }
+  .edit-field textarea{min-height:180px;resize:vertical;font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:1.6;}
+  .edit-row-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;}
+
+  /* Quiz */
+  .quiz-block{margin-top:26px;padding-top:22px;border-top:1px solid var(--line);}
+  .quiz-block .label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px;font-weight:600;}
+  .quiz-q{margin-bottom:18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:#FAFBFE;}
+  .quiz-q.correct{border-color:var(--success);background:#F1FAF4;}
+  .quiz-q.incorrect{border-color:var(--danger);background:#FDF2EF;}
+  .quiz-q p.q-text{font-weight:600;margin:0 0 10px;font-size:14.5px;}
+  .quiz-opt{display:flex;align-items:flex-start;gap:9px;padding:7px 0;font-size:14px;cursor:pointer;}
+  .quiz-opt input{margin-top:3px;}
+  .quiz-explain{margin-top:10px;font-size:13px;color:var(--muted);line-height:1.5;}
+  .quiz-score{font-weight:600;margin-bottom:14px;}
+
+  @media print{
+    body *{visibility:hidden;}
+    #print-area, #print-area *{visibility:visible;}
+    #print-area{display:block !important;position:absolute;top:0;left:0;width:100%;padding:24px;}
+    #print-area h1{font-family:'Fraunces',serif;font-size:26px;margin-bottom:6px;}
+    #print-area .print-desc{color:var(--muted);margin-bottom:22px;}
+    #print-area h2{font-family:'Fraunces',serif;font-size:18px;margin:22px 0 8px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <header id="topbar" class="topbar hidden">
+    <div class="brand"><span class="dot"></span>Synapse</div>
+    <div class="topbar-right">
+      <button class="link-btn" id="nav-dashboard">Dashboard</button>
+      <div class="user-chip">
+        <div class="avatar" id="avatar-init">?</div>
+        <span id="user-name" class="mono" style="font-size:13px;color:var(--muted);"></span>
+      </div>
+      <button class="link-btn" id="btn-signout">Sign out</button>
+    </div>
+  </header>
+
+  <!-- AUTH VIEW -->
+  <section id="view-auth" class="view auth-view">
+    <div class="auth-brand">
+      <div>
+        <div class="tag">AI learning studio</div>
+        <h1>Type a topic.<br>Synapse builds the course.</h1>
+        <p class="sub">Name anything you want to learn. Synapse drafts the syllabus, writes the notes, and lines up a video for every lesson — all on one page.</p>
+        <div class="constellation-wrap">
+          <div class="constellation" id="auth-constellation"></div>
+        </div>
+      </div>
+      <p style="color:#8890B8;font-size:12.5px;">Every course is generated fresh by Claude the moment you ask for it.</p>
+    </div>
+    <div class="auth-form-side">
+      <div class="auth-card">
+        <div class="tabs">
+          <button class="tab active" id="tab-signin">Sign in</button>
+          <button class="tab" id="tab-signup">Create account</button>
+        </div>
+        <div id="auth-error" class="form-error hidden"></div>
+        <form id="form-auth">
+          <div class="field">
+            <label for="in-username">Username</label>
+            <input id="in-username" autocomplete="username" required />
+          </div>
+          <div class="field">
+            <label for="in-password">Password</label>
+            <input id="in-password" type="password" autocomplete="current-password" required />
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;" id="auth-submit">Sign in</button>
+        </form>
+        <p class="disclaimer">Accounts are stored on the server with hashed passwords. Still — this is a small side project, so avoid reusing a password from somewhere important.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- DASHBOARD VIEW -->
+  <section id="view-dashboard" class="view hidden">
+    <div class="dash-wrap">
+      <div class="seed-panel">
+        <div class="eyebrow">Start something new</div>
+        <h2>What do you want to get good at?</h2>
+        <form class="seed-form" id="form-seed">
+          <input id="in-topic" placeholder="e.g. Public speaking, Rust ownership, the French Revolution…" required />
+          <button type="submit" class="btn btn-primary" id="generate-btn">Build my course</button>
+        </form>
+        <div class="gen-status hidden" id="gen-status">
+          <span class="spinner-dot"></span> Sketching a syllabus and writing the first notes…
+        </div>
+        <div id="gen-error" class="form-error hidden" style="max-width:520px;"></div>
+      </div>
+
+      <div class="section-head">
+        <h3>Your courses</h3>
+        <span class="count-badge" id="course-count">0 courses</span>
+      </div>
+      <div id="course-grid" class="course-grid"></div>
+      <div id="empty-state" class="empty-state hidden">
+        <h4>No courses yet</h4>
+        <p>Type a topic above and Synapse will put a full course together for you.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- COURSE VIEW -->
+  <section id="view-course" class="view hidden">
+    <div class="course-wrap">
+      <button class="link-btn" id="back-to-dash" style="margin-bottom:18px;">← Back to dashboard</button>
+      <div class="course-head" id="course-head-view">
+        <h2 id="course-title"></h2>
+        <p id="course-desc"></p>
+      </div>
+      <div class="course-head hidden" id="course-head-edit">
+        <input class="edit-title-input" id="edit-course-title" />
+        <textarea class="edit-desc-input" id="edit-course-desc" rows="2"></textarea>
+        <div class="edit-row-actions">
+          <button class="btn btn-primary btn-sm" id="save-course-edit">Save</button>
+          <button class="btn btn-ghost btn-sm" id="cancel-course-edit">Cancel</button>
+        </div>
+      </div>
+      <div class="course-actions-row">
+        <button class="btn btn-ghost btn-sm" id="toggle-course-edit">Edit course</button>
+        <button class="btn btn-ghost btn-sm" id="export-md">Download notes (.md)</button>
+        <button class="btn btn-ghost btn-sm" id="print-course">Print / Save PDF</button>
+      </div>
+      <div class="course-body">
+        <nav class="module-rail" id="module-rail"></nav>
+        <div class="module-main" id="module-main"></div>
+      </div>
+      <div id="print-area" style="display:none;"></div>
+      <p class="footer-note">Notes and video suggestions are AI-generated — double-check anything important before you rely on it.</p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+/* ---------------- API helper ---------------- */
+const API_BASE = '/api';
+
+function getToken(){ return localStorage.getItem('synapse_token'); }
+function setToken(t){ if(t) localStorage.setItem('synapse_token', t); else localStorage.removeItem('synapse_token'); }
+function getStoredUsername(){ return localStorage.getItem('synapse_username'); }
+function setStoredUsername(u){ if(u) localStorage.setItem('synapse_username', u); else localStorage.removeItem('synapse_username'); }
+
+async function api(path, { method='GET', body=null, auth=true } = {}){
+  const headers = { 'Content-Type': 'application/json' };
+  if(auth){
+    const token = getToken();
+    if(token) headers['Authorization'] = 'Bearer ' + token;
+  }
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  let data = null;
+  try{ data = await res.json(); }catch(e){ /* no body */ }
+  if(!res.ok){
+    const message = (data && data.detail) ? data.detail : ('Request failed (' + res.status + ')');
+    throw new Error(message);
+  }
+  return data;
+}
+
+/* ---------------- App state ---------------- */
+let currentUser = null;      // username string
+let coursesSummary = [];     // dashboard list: {id,title,description,lesson_count,completed_count,created_at}
+let activeCourse = null;     // full course object w/ modules, loaded on open
+let activeModuleIndex = 0;
+let authMode = 'signin';
+let courseEditing = false;
+let moduleEditing = false;
+let addingLesson = false;
+
+const el = (id) => document.getElementById(id);
+
+/* ---------------- View switching ---------------- */
+function showView(name){
+  ['auth','dashboard','course'].forEach(v=>{
+    el('view-'+v).classList.toggle('hidden', v!==name);
+  });
+  el('topbar').classList.toggle('hidden', name==='auth');
+}
+
+/* ---------------- Constellation loader ---------------- */
+function constellationSVG(nodeCount=5, seed=1){
+  const cx=210, cy=110, r=70;
+  let nodes = [];
+  for(let i=0;i<nodeCount;i++){
+    const angle = (Math.PI*2/nodeCount)*i - Math.PI/2;
+    nodes.push({x: cx+Math.cos(angle)*r, y: cy+Math.sin(angle)*r});
+  }
+  let lines = nodes.map((n,i)=>`<line class="cst-line" style="animation-delay:${i*120}ms" x1="${cx}" y1="${cy}" x2="${n.x}" y2="${n.y}"></line>`).join('');
+  let circles = nodes.map((n,i)=>`<circle class="cst-node" style="animation-delay:${i*120+200}ms" cx="${n.x}" cy="${n.y}" r="7"></circle>`).join('');
+  return `<svg viewBox="0 0 420 220" xmlns="http://www.w3.org/2000/svg">
+    ${lines}
+    <circle class="cst-node center" cx="${cx}" cy="${cy}" r="9"></circle>
+    ${circles}
+  </svg>`;
+}
+el('auth-constellation').innerHTML = constellationSVG(6);
+
+/* ---------------- Auth ---------------- */
+function setAuthMode(mode){
+  authMode = mode;
+  el('tab-signin').classList.toggle('active', mode==='signin');
+  el('tab-signup').classList.toggle('active', mode==='signup');
+  el('auth-submit').textContent = mode==='signin' ? 'Sign in' : 'Create account';
+  el('in-password').autocomplete = mode==='signin' ? 'current-password' : 'new-password';
+  el('auth-error').classList.add('hidden');
+}
+el('tab-signin').addEventListener('click', ()=>setAuthMode('signin'));
+el('tab-signup').addEventListener('click', ()=>setAuthMode('signup'));
+
+function showAuthError(msg){
+  el('auth-error').textContent = msg;
+  el('auth-error').classList.remove('hidden');
+}
+
+el('form-auth').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const username = el('in-username').value.trim();
+  const password = el('in-password').value;
+  if(!username || !password){ showAuthError('Enter a username and password.'); return; }
+  const submitBtn = el('auth-submit');
+  submitBtn.disabled = true;
+
+  try{
+    const path = authMode === 'signup' ? '/auth/signup' : '/auth/login';
+    const data = await api(path, { method:'POST', body:{ username, password }, auth:false });
+    setToken(data.access_token);
+    setStoredUsername(data.username);
+    currentUser = data.username;
+    await enterApp();
+  }catch(err){
+    showAuthError(err.message || 'Something went wrong. Please try again.');
+  }
+  submitBtn.disabled = false;
+});
+
+el('btn-signout').addEventListener('click', ()=>{
+  currentUser = null;
+  setToken(null);
+  setStoredUsername(null);
+  showView('auth');
+});
+
+/* ---------------- Enter app / load courses ---------------- */
+async function enterApp(){
+  el('user-name').textContent = currentUser;
+  el('avatar-init').textContent = currentUser.slice(0,1).toUpperCase();
+  el('topbar').classList.remove('hidden');
+  await loadCourses();
+  renderCourseGrid();
+  showView('dashboard');
+}
+
+async function loadCourses(){
+  try{
+    coursesSummary = await api('/courses');
+  }catch(err){
+    coursesSummary = [];
+  }
+}
+
+el('nav-dashboard').addEventListener('click', async ()=>{ await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+el('back-to-dash').addEventListener('click', async ()=>{ await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+
+/* ---------------- Dashboard rendering ---------------- */
+function renderCourseGrid(){
+  el('course-count').textContent = coursesSummary.length + (coursesSummary.length===1 ? ' course' : ' courses');
+  const grid = el('course-grid');
+  grid.innerHTML = '';
+  el('empty-state').classList.toggle('hidden', coursesSummary.length>0);
+  coursesSummary.forEach(course=>{
+    const pct = course.lesson_count ? Math.round((course.completed_count/course.lesson_count)*100) : 0;
+    const card = document.createElement('div');
+    card.className = 'course-card';
+    card.innerHTML = `
+      <h4>${escapeHTML(course.title)}</h4>
+      <p>${escapeHTML(course.description||'')}</p>
+      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="card-footer">
+        <span class="count-badge">${course.lesson_count} lessons · ${pct}%</span>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="icon-btn" data-del="${course.id}">Remove</button>
+          <button class="btn btn-sm btn-ghost" data-open="${course.id}">Open →</button>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+  grid.querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click', ()=>openCourse(b.dataset.open)));
+  grid.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async ()=>{
+    try{
+      await api('/courses/'+b.dataset.del, { method:'DELETE' });
+      await loadCourses();
+      renderCourseGrid();
+    }catch(err){ alert('Could not remove that course: ' + err.message); }
+  }));
+}
+
+function escapeHTML(str){
+  const d = document.createElement('div');
+  d.textContent = str||'';
+  return d.innerHTML;
+}
+
+/* ---------------- AI course generation ---------------- */
+el('form-seed').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const topic = el('in-topic').value.trim();
+  if(!topic) return;
+  const btn = el('generate-btn');
+  btn.disabled = true;
+  el('gen-status').classList.remove('hidden');
+  el('gen-error').classList.add('hidden');
+
+  try{
+    const course = await api('/courses', { method:'POST', body:{ topic } });
+    el('in-topic').value = '';
+    await loadCourses();
+    renderCourseGrid();
+    activeCourse = course;
+    activeModuleIndex = 0;
+    moduleEditing = false;
+    addingLesson = false;
+    el('course-head-view').classList.remove('hidden');
+    el('course-head-edit').classList.add('hidden');
+    renderCourseView();
+    showView('course');
+  }catch(err){
+    el('gen-error').textContent = 'Could not generate that course (' + (err.message||'unknown error') + '). Try a narrower topic or try again.';
+    el('gen-error').classList.remove('hidden');
+  }
+  el('gen-status').classList.add('hidden');
+  btn.disabled = false;
+});
+
+/* ---------------- Course view ---------------- */
+async function openCourse(id){
+  try{
+    activeCourse = await api('/courses/'+id);
+  }catch(err){
+    alert('Could not open that course: ' + err.message);
+    return;
+  }
+  activeModuleIndex = 0;
+  moduleEditing = false;
+  addingLesson = false;
+  el('course-head-view').classList.remove('hidden');
+  el('course-head-edit').classList.add('hidden');
+  renderCourseView();
+  showView('course');
+}
+
+function currentCourse(){ return activeCourse; }
+
+function renderCourseView(){
+  const course = currentCourse();
+  if(!course) return;
+  el('course-title').textContent = course.title;
+  el('course-desc').textContent = course.description || '';
+
+  renderModuleRail(course);
+  renderModuleMain(course);
+}
+
+/* ---- Module rail ---- */
+function renderModuleRail(course){
+  const rail = el('module-rail');
+  rail.innerHTML = '';
+  course.modules.forEach((m,i)=>{
+    const item = document.createElement('div');
+    item.className = 'module-item' + (i===activeModuleIndex ? ' active' : '') + ' edit-row';
+    item.innerHTML = `
+      <span class="module-num">${String(i+1).padStart(2,'0')}</span>
+      <span class="module-title" style="flex:1;cursor:pointer;">${escapeHTML(m.title)}</span>
+      ${m.completed ? '<span class="module-check">✓</span>' : ''}
+      <div class="rail-reorder">
+        <button data-up="${i}" ${i===0 ? 'disabled':''} title="Move up">▲</button>
+        <button data-down="${i}" ${i===course.modules.length-1 ? 'disabled':''} title="Move down">▼</button>
+      </div>
+      <button class="rail-del" data-delmod="${i}" title="Delete lesson">✕</button>
+    `;
+    item.querySelector('.module-title').addEventListener('click', ()=>{ activeModuleIndex = i; moduleEditing=false; renderCourseView(); });
+    rail.appendChild(item);
+  });
+
+  rail.querySelectorAll('[data-up]').forEach(b=>b.addEventListener('click', ()=>moveModule(parseInt(b.dataset.up), 'up')));
+  rail.querySelectorAll('[data-down]').forEach(b=>b.addEventListener('click', ()=>moveModule(parseInt(b.dataset.down), 'down')));
+  rail.querySelectorAll('[data-delmod]').forEach(b=>b.addEventListener('click', ()=>deleteModule(parseInt(b.dataset.delmod))));
+
+  const addWrap = document.createElement('div');
+  addWrap.className = 'add-lesson-form';
+  if(addingLesson){
+    addWrap.innerHTML = `
+      <input id="new-lesson-topic" placeholder="New lesson topic…" />
+      <div class="edit-row-actions">
+        <button class="btn btn-primary btn-sm" id="confirm-add-lesson">Generate</button>
+        <button class="btn btn-ghost btn-sm" id="cancel-add-lesson">Cancel</button>
+      </div>
+      <div id="add-lesson-status" class="gen-status hidden" style="color:var(--muted);"><span class="spinner-dot"></span> Writing that lesson…</div>
+      <div id="add-lesson-error" class="form-error hidden"></div>
+    `;
+  } else {
+    addWrap.innerHTML = `<button class="btn btn-ghost btn-sm" id="start-add-lesson">+ Add lesson</button>`;
+  }
+  rail.appendChild(addWrap);
+
+  if(addingLesson){
+    el('cancel-add-lesson').addEventListener('click', ()=>{ addingLesson=false; renderCourseView(); });
+    el('confirm-add-lesson').addEventListener('click', ()=>addLesson(course));
+  } else {
+    el('start-add-lesson').addEventListener('click', ()=>{ addingLesson=true; renderCourseView(); });
+  }
+}
+
+async function moveModule(index, direction){
+  const course = currentCourse();
+  try{
+    activeCourse = await api(`/courses/${course.id}/modules/${index}/reorder`, { method:'POST', body:{ direction } });
+    if(activeModuleIndex===index) activeModuleIndex = direction==='up' ? index-1 : index+1;
+    else if(activeModuleIndex===(direction==='up' ? index-1 : index+1)) activeModuleIndex = index;
+    renderCourseView();
+  }catch(err){ alert('Could not reorder: ' + err.message); }
+}
+
+async function deleteModule(index){
+  const course = currentCourse();
+  if(course.modules.length<=1){ alert("A course needs at least one lesson — add a new one before removing this."); return; }
+  if(!confirm('Remove this lesson from the course?')) return;
+  try{
+    activeCourse = await api(`/courses/${course.id}/modules/${index}`, { method:'DELETE' });
+    if(activeModuleIndex>=activeCourse.modules.length) activeModuleIndex = activeCourse.modules.length-1;
+    renderCourseView();
+  }catch(err){ alert('Could not remove that lesson: ' + err.message); }
+}
+
+async function addLesson(course){
+  const topic = el('new-lesson-topic').value.trim();
+  if(!topic) return;
+  el('add-lesson-status').classList.remove('hidden');
+  el('add-lesson-error').classList.add('hidden');
+  try{
+    activeCourse = await api(`/courses/${course.id}/modules`, { method:'POST', body:{ topic } });
+    activeModuleIndex = activeCourse.modules.length-1;
+    addingLesson = false;
+    renderCourseView();
+  }catch(err){
+    el('add-lesson-error').textContent = 'Could not write that lesson: ' + err.message;
+    el('add-lesson-error').classList.remove('hidden');
+    el('add-lesson-status').classList.add('hidden');
+  }
+}
+
+/* ---- Module main ---- */
+function renderModuleMain(course){
+  const module = course.modules[activeModuleIndex];
+  const main = el('module-main');
+
+  if(moduleEditing){
+    main.innerHTML = `
+      <div class="edit-field">
+        <label for="edit-mod-title">Lesson title</label>
+        <input id="edit-mod-title" value="${escapeHTML(module.title)}" />
+      </div>
+      <div class="edit-field">
+        <label for="edit-mod-notes">Notes (markdown)</label>
+        <textarea id="edit-mod-notes">${escapeHTML(module.notes||'')}</textarea>
+      </div>
+      <div class="edit-field">
+        <label for="edit-mod-video">Video search query</label>
+        <input id="edit-mod-video" value="${escapeHTML(module.videoQuery||'')}" />
+      </div>
+      <div class="edit-row-actions">
+        <button class="btn btn-primary btn-sm" id="save-mod-edit">Save changes</button>
+        <button class="btn btn-ghost btn-sm" id="cancel-mod-edit">Cancel</button>
+      </div>
+    `;
+    el('save-mod-edit').addEventListener('click', async ()=>{
+      try{
+        activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}`, {
+          method:'PUT',
+          body:{
+            title: el('edit-mod-title').value.trim() || module.title,
+            notes: el('edit-mod-notes').value,
+            videoQuery: el('edit-mod-video').value.trim()
+          }
+        });
+        moduleEditing = false;
+        renderCourseView();
+      }catch(err){ alert('Could not save changes: ' + err.message); }
+    });
+    el('cancel-mod-edit').addEventListener('click', ()=>{ moduleEditing=false; renderCourseView(); });
+    return;
+  }
+
+  const notesHtml = (typeof marked !== 'undefined') ? marked.parse(module.notes||'') : (module.notes||'');
+  const query = encodeURIComponent(module.videoQuery || module.title);
+  main.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+      <h3 style="flex:1;">${escapeHTML(module.title)}</h3>
+      <div style="display:flex;gap:8px;flex-shrink:0;">
+        <button class="btn btn-ghost btn-sm" id="edit-mod-btn">Edit</button>
+        <button class="btn btn-ghost btn-sm" id="regen-mod-btn">Regenerate</button>
+      </div>
+    </div>
+    <div id="regen-status" class="gen-status hidden" style="color:var(--muted);margin-bottom:10px;"><span class="spinner-dot"></span> Rewriting this lesson…</div>
+    <div class="notes">${notesHtml}</div>
+    <div class="video-block">
+      <div class="label">Related video</div>
+      <div class="video-frame">
+        <iframe src="https://www.youtube.com/embed?listType=search&list=${query}" allow="encrypted-media" allowfullscreen loading="lazy"></iframe>
+      </div>
+      <div class="video-fallback">If nothing loads above, <a href="https://www.youtube.com/results?search_query=${query}" target="_blank" rel="noopener">search this on YouTube directly ↗</a></div>
+    </div>
+    <div class="quiz-block" id="quiz-block">
+      <div class="label">Check your understanding</div>
+      <div id="quiz-container"></div>
+    </div>
+    <div class="module-actions">
+      <button class="btn btn-ghost btn-sm" id="prev-mod" ${activeModuleIndex===0 ? 'disabled':''}>← Previous</button>
+      <button class="btn btn-primary btn-sm" id="toggle-complete">${module.completed ? 'Mark as not done' : 'Mark lesson complete'}</button>
+      <button class="btn btn-ghost btn-sm" id="next-mod" ${activeModuleIndex===course.modules.length-1 ? 'disabled':''}>Next →</button>
+    </div>
+  `;
+  el('prev-mod').addEventListener('click', ()=>{ activeModuleIndex--; renderCourseView(); });
+  el('next-mod').addEventListener('click', ()=>{ activeModuleIndex++; renderCourseView(); });
+  el('toggle-complete').addEventListener('click', async ()=>{
+    try{
+      activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/complete`, {
+        method:'PATCH', body:{ completed: !module.completed }
+      });
+      renderCourseView();
+    }catch(err){ alert('Could not update completion: ' + err.message); }
+  });
+  el('edit-mod-btn').addEventListener('click', ()=>{ moduleEditing=true; renderCourseView(); });
+  el('regen-mod-btn').addEventListener('click', ()=>regenerateModule(course));
+
+  renderQuiz(course, module);
+}
+
+async function regenerateModule(course){
+  el('regen-status').classList.remove('hidden');
+  try{
+    activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/regenerate`, { method:'POST' });
+    renderCourseView();
+  }catch(err){
+    el('regen-status').classList.add('hidden');
+    alert('Could not regenerate this lesson: ' + err.message);
+  }
+}
+
+/* ---- Quiz ---- */
+function renderQuiz(course, module){
+  const container = el('quiz-container');
+  if(module.quiz){
+    renderQuizQuestions(course, module, container);
+    return;
+  }
+  container.innerHTML = `<button class="btn btn-ghost btn-sm" id="start-quiz-btn">Take a quiz on this lesson</button>
+    <div id="quiz-status" class="gen-status hidden" style="color:var(--muted);margin-top:10px;"><span class="spinner-dot"></span> Writing quiz questions…</div>
+    <div id="quiz-error" class="form-error hidden"></div>`;
+  el('start-quiz-btn').addEventListener('click', async ()=>{
+    el('quiz-status').classList.remove('hidden');
+    el('start-quiz-btn').disabled = true;
+    try{
+      activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/quiz`, { method:'POST' });
+      const freshModule = activeCourse.modules[activeModuleIndex];
+      renderQuizQuestions(activeCourse, freshModule, container);
+    }catch(err){
+      el('quiz-status').classList.add('hidden');
+      el('quiz-error').textContent = 'Could not generate a quiz: ' + err.message;
+      el('quiz-error').classList.remove('hidden');
+      el('start-quiz-btn').disabled = false;
+    }
+  });
+}
+
+function renderQuizQuestions(course, module, container){
+  const quiz = module.quiz;
+  let html = `<div class="quiz-score" id="quiz-score-line"></div>`;
+  quiz.questions.forEach((q,qi)=>{
+    html += `<div class="quiz-q" id="quiz-q-${qi}">
+      <p class="q-text">${qi+1}. ${escapeHTML(q.prompt)}</p>
+      ${q.options.map(o=>`
+        <label class="quiz-opt">
+          <input type="radio" name="quiz-${qi}" value="${o.id}" data-qindex="${qi}">
+          <span>${escapeHTML(o.text)}</span>
+        </label>`).join('')}
+      <div class="quiz-explain hidden" id="quiz-explain-${qi}"></div>
+    </div>`;
+  });
+  html += `<button class="btn btn-ghost btn-sm" id="new-quiz-btn">Get new questions</button>`;
+  container.innerHTML = html;
+
+  function updateScore(){
+    const correct = quiz.questions.filter((q,qi)=>{
+      const sel = document.querySelector(`input[name="quiz-${qi}"]:checked`);
+      return sel && sel.value===q.correctId;
+    });
+    const answered = quiz.questions.filter((q,qi)=>document.querySelector(`input[name="quiz-${qi}"]:checked`));
+    el('quiz-score-line').textContent = answered.length>0
+      ? `Score: ${correct.length} / ${quiz.questions.length}`
+      : '';
+  }
+
+  container.querySelectorAll('input[type=radio]').forEach(input=>{
+    input.addEventListener('change', (e)=>{
+      const qi = parseInt(e.target.dataset.qindex);
+      const q = quiz.questions[qi];
+      const isCorrect = e.target.value === q.correctId;
+      const qDiv = el('quiz-q-'+qi);
+      qDiv.classList.toggle('correct', isCorrect);
+      qDiv.classList.toggle('incorrect', !isCorrect);
+      qDiv.querySelectorAll('input[type=radio]').forEach(r=>r.disabled=true);
+      const explainDiv = el('quiz-explain-'+qi);
+      explainDiv.textContent = (isCorrect ? 'Correct. ' : 'Not quite. ') + (q.explanation||'');
+      explainDiv.classList.remove('hidden');
+      updateScore();
+    });
+  });
+
+  el('new-quiz-btn').addEventListener('click', async ()=>{
+    container.innerHTML = `<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Writing new questions…</div>`;
+    try{
+      activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/quiz`, { method:'POST' });
+      const freshModule = activeCourse.modules[activeModuleIndex];
+      renderQuizQuestions(activeCourse, freshModule, container);
+    }catch(err){
+      container.innerHTML = `<div class="form-error">Could not generate new questions: ${escapeHTML(err.message)}</div>`;
+    }
+  });
+}
+
+/* ---- Course header edit ---- */
+el('toggle-course-edit').addEventListener('click', ()=>{
+  const course = currentCourse();
+  if(!course) return;
+  el('edit-course-title').value = course.title;
+  el('edit-course-desc').value = course.description||'';
+  el('course-head-view').classList.add('hidden');
+  el('course-head-edit').classList.remove('hidden');
+});
+el('cancel-course-edit').addEventListener('click', ()=>{
+  el('course-head-view').classList.remove('hidden');
+  el('course-head-edit').classList.add('hidden');
+});
+el('save-course-edit').addEventListener('click', async ()=>{
+  const course = currentCourse();
+  try{
+    activeCourse = await api(`/courses/${course.id}`, {
+      method:'PUT',
+      body:{ title: el('edit-course-title').value.trim(), description: el('edit-course-desc').value.trim() }
+    });
+    el('course-head-view').classList.remove('hidden');
+    el('course-head-edit').classList.add('hidden');
+    renderCourseView();
+    await loadCourses();
+    renderCourseGrid();
+  }catch(err){ alert('Could not save course details: ' + err.message); }
+});
+
+/* ---- Export ---- */
+el('export-md').addEventListener('click', ()=>{
+  const course = currentCourse();
+  if(!course) return;
+  let md = `# ${course.title}\n\n${course.description||''}\n\n`;
+  course.modules.forEach((m,i)=>{
+    md += `## ${i+1}. ${m.title}\n\n${m.notes||''}\n\n`;
+  });
+  const blob = new Blob([md], {type:'text/markdown'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = course.title.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,60) + '.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+el('print-course').addEventListener('click', ()=>{
+  const course = currentCourse();
+  if(!course) return;
+  const area = el('print-area');
+  let html = `<h1>${escapeHTML(course.title)}</h1><p class="print-desc">${escapeHTML(course.description||'')}</p>`;
+  course.modules.forEach((m,i)=>{
+    const notesHtml = (typeof marked !== 'undefined') ? marked.parse(m.notes||'') : (m.notes||'');
+    html += `<h2>${i+1}. ${escapeHTML(m.title)}</h2>${notesHtml}`;
+  });
+  area.innerHTML = html;
+  window.print();
+});
+
+/* ---------------- Boot ---------------- */
+(async function boot(){
+  const token = getToken();
+  const storedUsername = getStoredUsername();
+  if(token && storedUsername){
+    try{
+      const me = await api('/auth/me');
+      currentUser = me.username;
+      await enterApp();
+      return;
+    }catch(err){
+      setToken(null);
+      setStoredUsername(null);
+    }
+  }
+  showView('auth');
+})();
+</script>
+</body>
+</html>
