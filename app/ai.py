@@ -16,63 +16,63 @@ class AIError(Exception):
 def _require_key():
     if not GEMINI_API_KEY:
         raise AIError(
-            "The server is missing GEMINI_API_KEY. Get a key from Google AI Studio "
-            "(aistudio.google.com) and set it as an environment variable in Vercel."
+            "The server is missing GEMINI_API_KEY. Set it as an environment variable in Vercel."
         )
 
 
 def _clean_json(raw: str) -> dict:
-    """Robust JSON cleaner that handles codeblocks, extra text, and raw JSON."""
+    """Robust JSON cleaner."""
     raw = raw.strip()
     
-    # 1. Direct parse attempt
-    try:
-        return json.loads(raw)
-    except Exception:
-        pass
-
-    # 2. Extract code block if enclosed in ```
+    # Remove markdown code fences if present
     if "```" in raw:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
+        if match:
+            raw = match.group(1).strip()
+
+    try:
+        data = json.loads(raw)
+        # If wrapped in a single outer key like {"course": {...}}, unwrap it
+        if isinstance(data, dict) and len(data) == 1 and isinstance(list(data.values())[0], dict):
+            inner = list(data.values())[0]
+            if "modules" in inner or "title" in inner:
+                return inner
+        return data
+    except Exception as e:
+        # Fallback: find first outer { ... }
+        match = re.search(r"(\{[\s\S]*\})", raw)
         if match:
             try:
                 return json.loads(match.group(1).strip())
             except Exception:
                 pass
-
-    # 3. Extract the first { ... } JSON object found in text
-    match = re.search(r"(\{[\s\S]*\})", raw)
-    if match:
-        try:
-            return json.loads(match.group(1).strip())
-        except Exception:
-            pass
-
-    raise AIError("Unexpected response format from the model.")
+        raise AIError(f"Could not parse JSON response: {e}")
 
 
-async def _call_gemini(system_prompt: str, user_message: str, max_tokens: int = 4000) -> str:
+async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000) -> str:
     _require_key()
     url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
     headers = {
         "x-goog-api-key": GEMINI_API_KEY,
         "content-type": "application/json",
     }
+    
+    gen_config = {
+        "responseMimeType": "application/json",
+        "maxOutputTokens": max_tokens,
+        "temperature": 0.7,
+    }
+    if schema:
+        gen_config["responseSchema"] = schema
+
     payload = {
         "contents": [
             {
                 "role": "user",
-                "parts": [{"text": user_message}],
+                "parts": [{"text": prompt}],
             }
         ],
-        "systemInstruction": {
-            "parts": [{"text": system_prompt}],
-        },
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "maxOutputTokens": max_tokens,
-            "temperature": 0.7,
-        },
+        "generationConfig": gen_config,
     }
     
     try:
@@ -97,30 +97,41 @@ async def _call_gemini(system_prompt: str, user_message: str, max_tokens: int = 
 
 
 async def generate_course(topic: str) -> dict:
-    system_prompt = (
-        "You are a curriculum designer. Respond with ONLY compact JSON matching exactly this shape:\n"
-        '{\n'
-        '  "title": "Course Title",\n'
-        '  "description": "Short description (20 words or fewer)",\n'
-        '  "modules": [\n'
-        '    {\n'
-        '      "title": "Module Title",\n'
-        '      "notes": "Short markdown lesson notes (60-90 words)",\n'
-        '      "videoQuery": "YouTube search phrase (8 words or fewer)"\n'
-        '    }\n'
-        '  ]\n'
-        '}\n'
-        "Include exactly 4 modules, ordered from foundational to advanced."
-    )
-    raw = await _call_gemini(
-        system_prompt, 
-        f"Design a short course on: {topic}", 
-        max_tokens=4000
+    prompt = (
+        f"Design a high-quality 4-module short course on: {topic}.\n"
+        "Requirements:\n"
+        "- Title: concise course title.\n"
+        "- Description: 20 words or fewer.\n"
+        "- Exactly 4 modules ordered from foundational to advanced.\n"
+        "- Module notes: 60-90 words in markdown.\n"
+        "- Video query: specific YouTube search phrase (8 words or fewer)."
     )
     
+    course_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "title": {"type": "STRING"},
+            "description": {"type": "STRING"},
+            "modules": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "title": {"type": "STRING"},
+                        "notes": {"type": "STRING"},
+                        "videoQuery": {"type": "STRING"},
+                    },
+                    "required": ["title", "notes", "videoQuery"],
+                },
+            },
+        },
+        "required": ["title", "description", "modules"],
+    }
+
+    raw = await _call_gemini(prompt, schema=course_schema, max_tokens=4000)
     parsed = _clean_json(raw)
 
-    if not parsed.get("title") or not isinstance(parsed.get("modules"), list) or not parsed["modules"]:
+    if not isinstance(parsed, dict) or not parsed.get("title") or not isinstance(parsed.get("modules"), list):
         raise AIError("Incomplete course data returned by the model.")
 
     for m in parsed["modules"]:
@@ -130,24 +141,22 @@ async def generate_course(topic: str) -> dict:
 
 
 async def generate_module(course_title: str, lesson_topic: str) -> dict:
-    system_prompt = (
-        "You are a curriculum designer writing one lesson for an existing course. "
-        "Respond with ONLY compact JSON matching this shape:\n"
-        '{\n'
-        '  "title": "Lesson Title",\n'
-        '  "notes": "Markdown lesson notes (60-90 words)",\n'
-        '  "videoQuery": "Specific YouTube search phrase (8 words or fewer)"\n'
-        '}'
-    )
-    raw = await _call_gemini(
-        system_prompt,
-        f'Course: "{course_title}". Write the lesson: "{lesson_topic}".',
-        max_tokens=2000,
-    )
+    prompt = f'Course: "{course_title}". Write the lesson module for: "{lesson_topic}".'
     
+    module_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "title": {"type": "STRING"},
+            "notes": {"type": "STRING"},
+            "videoQuery": {"type": "STRING"},
+        },
+        "required": ["title", "notes", "videoQuery"],
+    }
+
+    raw = await _call_gemini(prompt, schema=module_schema, max_tokens=2000)
     parsed = _clean_json(raw)
 
-    if not parsed.get("title") or not parsed.get("notes"):
+    if not isinstance(parsed, dict) or not parsed.get("title") or not parsed.get("notes"):
         raise AIError("Incomplete lesson data returned by the model.")
 
     parsed["completed"] = False
@@ -156,32 +165,45 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
 
 
 async def generate_quiz(module_title: str, module_notes: str) -> dict:
-    system_prompt = (
-        "Write a short quiz testing the lesson below. Respond with ONLY compact JSON matching this shape:\n"
-        '{\n'
-        '  "questions": [\n'
-        '    {\n'
-        '      "prompt": "Question text",\n'
-        '      "options": [\n'
-        '        {"id": "a", "text": "Option A"},\n'
-        '        {"id": "b", "text": "Option B"},\n'
-        '        {"id": "c", "text": "Option C"}\n'
-        '      ],\n'
-        '      "correctId": "a",\n'
-        '      "explanation": "Explanation under 25 words"\n'
-        '    }\n'
-        '  ]\n'
-        '}\n'
-        "Write exactly 3 questions, each with exactly 3 options (id a, b, c) and one correct option id."
-    )
-    raw = await _call_gemini(
-        system_prompt,
-        f'Lesson title: "{module_title}"\nLesson notes:\n{module_notes}',
-        max_tokens=2500,
+    prompt = (
+        f'Lesson title: "{module_title}"\n'
+        f'Lesson notes:\n{module_notes}\n\n'
+        "Write exactly 3 multiple-choice quiz questions testing this lesson with 3 options each (id: a, b, c)."
     )
     
+    quiz_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "questions": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "prompt": {"type": "STRING"},
+                        "options": {
+                            "type": "ARRAY",
+                            "items": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "id": {"type": "STRING"},
+                                    "text": {"type": "STRING"},
+                                },
+                                "required": ["id", "text"],
+                            },
+                        },
+                        "correctId": {"type": "STRING"},
+                        "explanation": {"type": "STRING"},
+                    },
+                    "required": ["prompt", "options", "correctId", "explanation"],
+                },
+            },
+        },
+        "required": ["questions"],
+    }
+
+    raw = await _call_gemini(prompt, schema=quiz_schema, max_tokens=2500)
     parsed = _clean_json(raw)
 
-    if not isinstance(parsed.get("questions"), list) or not parsed["questions"]:
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("questions"), list) or not parsed["questions"]:
         raise AIError("Incomplete quiz data returned by the model.")
     return parsed
