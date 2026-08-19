@@ -2,12 +2,15 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from . import models  # noqa: F401 (ensures models are registered before create_all)
 from .database import Base, engine
 from .routers import auth, courses
-# index.html lives one directory up from this file (project root: app/../index.html)
-FRONTEND_INDEX = os.path.join(os.path.dirname(__file__), "..", "index.html")
+
+# Vercel's docs specifically recommend basing file paths on the working
+# directory (the project root) rather than __file__ for the Python runtime.
+FRONTEND_INDEX = os.path.join(os.getcwd(), "index.html")
 
 Base.metadata.create_all(bind=engine)
 
@@ -31,6 +34,15 @@ app.include_router(courses.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
 @app.get("/")
 def serve_frontend():
+    if not os.path.isfile(FRONTEND_INDEX):
+        return {
+            "error": "index.html not found",
+            "looked_in": FRONTEND_INDEX,
+            "cwd": os.getcwd(),
+            "cwd_contents": os.listdir(os.getcwd()),
+        }
     return FileResponse(FRONTEND_INDEX)
