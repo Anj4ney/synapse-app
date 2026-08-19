@@ -1,37 +1,9 @@
 import json
 import os
 import re
-import httpx
 import urllib.parse
+import httpx
 
-async def get_youtube_video_id(query: str) -> str:
-    """Searches YouTube and returns the first matching video ID."""
-    try:
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://www.youtube.com/results?search_query={encoded_query}"
-        
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
-        
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-            
-        if resp.status_code == 200:
-            # Find the first 11-character video ID in YouTube search results
-            matches = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
-            if matches:
-                # Return the first found valid video ID
-                return matches[0]
-    except Exception as e:
-        print(f"Error fetching YouTube ID for '{query}': {e}")
-    
-    return ""
-
-# In Vercel, set GEMINI_API_KEY in Settings > Environment Variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -48,26 +20,46 @@ def _require_key():
         )
 
 
+async def get_youtube_video_id(query: str) -> str:
+    """Searches YouTube and returns a real, playable video ID."""
+    if not query:
+        return ""
+    try:
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://www.youtube.com/results?search_query={encoded_query}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            
+        if resp.status_code == 200:
+            matches = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
+            if matches:
+                # Return the first found video ID
+                return matches[0]
+    except Exception as e:
+        print(f"Error fetching YouTube ID for '{query}': {e}")
+    return ""
+
+
 def _clean_json(raw: str) -> dict:
-    """Robust JSON cleaner."""
     raw = raw.strip()
-    
-    # Remove markdown code fences if present
     if "```" in raw:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
         if match:
             raw = match.group(1).strip()
-
     try:
         data = json.loads(raw)
-        # If wrapped in a single outer key like {"course": {...}}, unwrap it
         if isinstance(data, dict) and len(data) == 1 and isinstance(list(data.values())[0], dict):
             inner = list(data.values())[0]
             if "modules" in inner or "title" in inner:
                 return inner
         return data
     except Exception as e:
-        # Fallback: find first outer { ... }
         match = re.search(r"(\{[\s\S]*\})", raw)
         if match:
             try:
@@ -84,7 +76,6 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
         "x-goog-api-key": GEMINI_API_KEY,
         "content-type": "application/json",
     }
-    
     gen_config = {
         "responseMimeType": "application/json",
         "maxOutputTokens": max_tokens,
@@ -94,12 +85,7 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
         gen_config["responseSchema"] = schema
 
     payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [{"text": prompt}],
-            }
-        ],
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": gen_config,
     }
     
@@ -134,7 +120,6 @@ async def generate_course(topic: str) -> dict:
         "- Module notes: 60-90 words in markdown.\n"
         "- Video query: specific YouTube search phrase (8 words or fewer)."
     )
-    
     course_schema = {
         "type": "OBJECT",
         "properties": {
@@ -165,12 +150,14 @@ async def generate_course(topic: str) -> dict:
     for m in parsed["modules"]:
         m["completed"] = False
         m["quiz"] = None
+        # Finds and attaches the real YouTube video ID:
+        m["videoId"] = await get_youtube_video_id(m.get("videoQuery", topic))
+        
     return parsed
 
 
 async def generate_module(course_title: str, lesson_topic: str) -> dict:
     prompt = f'Course: "{course_title}". Write the lesson module for: "{lesson_topic}".'
-    
     module_schema = {
         "type": "OBJECT",
         "properties": {
@@ -189,6 +176,7 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
 
     parsed["completed"] = False
     parsed["quiz"] = None
+    parsed["videoId"] = await get_youtube_video_id(parsed.get("videoQuery", lesson_topic))
     return parsed
 
 
@@ -198,7 +186,6 @@ async def generate_quiz(module_title: str, module_notes: str) -> dict:
         f'Lesson notes:\n{module_notes}\n\n'
         "Write exactly 3 multiple-choice quiz questions testing this lesson with 3 options each (id: a, b, c)."
     )
-    
     quiz_schema = {
         "type": "OBJECT",
         "properties": {
