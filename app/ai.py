@@ -2,6 +2,35 @@ import json
 import os
 import re
 import httpx
+import re
+import urllib.parse
+
+async def get_youtube_video_id(query: str) -> str:
+    """Searches YouTube and returns the first matching video ID."""
+    try:
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://www.youtube.com/results?search_query={encoded_query}"
+        
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
+        
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            
+        if resp.status_code == 200:
+            # Find the first 11-character video ID in YouTube search results
+            matches = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
+            if matches:
+                # Return the first found valid video ID
+                return matches[0]
+    except Exception as e:
+        print(f"Error fetching YouTube ID for '{query}': {e}")
+    
+    return ""
 
 # In Vercel, set GEMINI_API_KEY in Settings > Environment Variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
