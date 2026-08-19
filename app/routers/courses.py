@@ -6,6 +6,18 @@ from sqlalchemy.orm import Session
 from .. import ai, models, schemas
 from ..database import get_db
 from .auth import get_current_user
+async def generate_course(topic: str) -> dict:
+    # ... (same prompt and Gemini call as before) ...
+    raw = await _call_gemini(prompt, schema=course_schema, max_tokens=4000)
+    parsed = _clean_json(raw)
+
+    for m in parsed["modules"]:
+        m["completed"] = False
+        m["quiz"] = None
+        # Automatically resolve the search query into a real playable video ID
+        m["videoId"] = await get_youtube_video_id(m.get("videoQuery", topic))
+        
+    return parsed
 
 router = APIRouter(prefix="/api/courses", tags=["courses"])
 
