@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import httpx
 
 # In Vercel, set GEMINI_API_KEY in Settings > Environment Variables
@@ -21,19 +22,36 @@ def _require_key():
 
 
 def _clean_json(raw: str) -> dict:
+    """Robust JSON cleaner that handles codeblocks, extra text, and raw JSON."""
     raw = raw.strip()
-    if raw.startswith("```"):
-        parts = raw.split("\n", 1)
-        raw = parts[1] if len(parts) > 1 else ""
-        if raw.endswith("```"):
-            raw = raw[:-3]
-    raw = raw.strip()
-    if raw[:4].lower() == "json":
-        raw = raw[4:].strip()
-    return json.loads(raw)
+    
+    # 1. Direct parse attempt
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+
+    # 2. Extract code block if enclosed in ```
+    if "```" in raw:
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except Exception:
+                pass
+
+    # 3. Extract the first { ... } JSON object found in text
+    match = re.search(r"(\{[\s\S]*\})", raw)
+    if match:
+        try:
+            return json.loads(match.group(1).strip())
+        except Exception:
+            pass
+
+    raise AIError("Unexpected response format from the model.")
 
 
-async def _call_gemini(system_prompt: str, user_message: str, max_tokens: int = 1200) -> str:
+async def _call_gemini(system_prompt: str, user_message: str, max_tokens: int = 4000) -> str:
     _require_key()
     url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
     headers = {
@@ -81,16 +99,26 @@ async def _call_gemini(system_prompt: str, user_message: str, max_tokens: int = 
 async def generate_course(topic: str) -> dict:
     system_prompt = (
         "You are a curriculum designer. Respond with ONLY compact JSON matching exactly this shape:\n"
-        '{"title":"string","description":"string, 20 words or fewer",'
-        '"modules":[{"title":"string","notes":"markdown string, 60-90 words, may use a short heading '
-        'and a short bullet list","videoQuery":"a good, specific YouTube search phrase, 8 words or fewer"}]}\n'
+        '{\n'
+        '  "title": "Course Title",\n'
+        '  "description": "Short description (20 words or fewer)",\n'
+        '  "modules": [\n'
+        '    {\n'
+        '      "title": "Module Title",\n'
+        '      "notes": "Short markdown lesson notes (60-90 words)",\n'
+        '      "videoQuery": "YouTube search phrase (8 words or fewer)"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n'
         "Include exactly 4 modules, ordered from foundational to advanced."
     )
-    raw = await _call_gemini(system_prompt, f"Design a short course on: {topic}", max_tokens=1500)
-    try:
-        parsed = _clean_json(raw)
-    except Exception:
-        raise AIError("Unexpected response format from the model.")
+    raw = await _call_gemini(
+        system_prompt, 
+        f"Design a short course on: {topic}", 
+        max_tokens=4000
+    )
+    
+    parsed = _clean_json(raw)
 
     if not parsed.get("title") or not isinstance(parsed.get("modules"), list) or not parsed["modules"]:
         raise AIError("Incomplete course data returned by the model.")
@@ -105,18 +133,19 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
     system_prompt = (
         "You are a curriculum designer writing one lesson for an existing course. "
         "Respond with ONLY compact JSON matching this shape:\n"
-        '{"title":"string","notes":"markdown string, 60-90 words, may use a short heading and a short '
-        'bullet list","videoQuery":"a specific YouTube search phrase, 8 words or fewer"}'
+        '{\n'
+        '  "title": "Lesson Title",\n'
+        '  "notes": "Markdown lesson notes (60-90 words)",\n'
+        '  "videoQuery": "Specific YouTube search phrase (8 words or fewer)"\n'
+        '}'
     )
     raw = await _call_gemini(
         system_prompt,
         f'Course: "{course_title}". Write the lesson: "{lesson_topic}".',
-        max_tokens=800,
+        max_tokens=2000,
     )
-    try:
-        parsed = _clean_json(raw)
-    except Exception:
-        raise AIError("Unexpected response format from the model.")
+    
+    parsed = _clean_json(raw)
 
     if not parsed.get("title") or not parsed.get("notes"):
         raise AIError("Incomplete lesson data returned by the model.")
@@ -129,19 +158,29 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
 async def generate_quiz(module_title: str, module_notes: str) -> dict:
     system_prompt = (
         "Write a short quiz testing the lesson below. Respond with ONLY compact JSON matching this shape:\n"
-        '{"questions":[{"prompt":"string","options":[{"id":"a","text":"string"},{"id":"b","text":"string"},'
-        '{"id":"c","text":"string"}],"correctId":"string","explanation":"string, under 25 words"}]}\n'
-        "Write exactly 3 questions, each with exactly 3 options and one correct option id."
+        '{\n'
+        '  "questions": [\n'
+        '    {\n'
+        '      "prompt": "Question text",\n'
+        '      "options": [\n'
+        '        {"id": "a", "text": "Option A"},\n'
+        '        {"id": "b", "text": "Option B"},\n'
+        '        {"id": "c", "text": "Option C"}\n'
+        '      ],\n'
+        '      "correctId": "a",\n'
+        '      "explanation": "Explanation under 25 words"\n'
+        '    }\n'
+        '  ]\n'
+        '}\n'
+        "Write exactly 3 questions, each with exactly 3 options (id a, b, c) and one correct option id."
     )
     raw = await _call_gemini(
         system_prompt,
         f'Lesson title: "{module_title}"\nLesson notes:\n{module_notes}',
-        max_tokens=1000,
+        max_tokens=2500,
     )
-    try:
-        parsed = _clean_json(raw)
-    except Exception:
-        raise AIError("Unexpected response format from the model.")
+    
+    parsed = _clean_json(raw)
 
     if not isinstance(parsed.get("questions"), list) or not parsed["questions"]:
         raise AIError("Incomplete quiz data returned by the model.")
