@@ -2,7 +2,6 @@ import json
 import os
 import re
 import httpx
-import re
 import urllib.parse
 
 async def get_youtube_video_id(query: str) -> str:
