@@ -26,7 +26,7 @@ synapse-app/
 │   ├── models.py          # User, Course tables
 │   ├── schemas.py         # Pydantic request/response models
 │   ├── security.py        # Password hashing + JWT
-│   ├── ai.py               # Anthropic API calls (course/module/quiz generation)
+│   ├── ai.py               # Gemini API calls (course/module/quiz generation)
 │   └── routers/
 │       ├── auth.py         # /api/auth/signup, /login, /me
 │       └── courses.py      # /api/courses/... CRUD + generation endpoints
@@ -46,7 +46,7 @@ pip install -r requirements.txt
 
 cp .env.example .env
 # edit .env: at minimum set JWT_SECRET to a random string.
-# Add ANTHROPIC_API_KEY to enable course/quiz generation (see step 2).
+# Add Gemini_API_KEY to enable course/quiz generation (see step 2).
 
 uvicorn app.main:app --reload --port 8000
 ```
@@ -72,14 +72,12 @@ origin. For local testing, either:
 On Vercel (step 3), the frontend and API are automatically on the same
 origin, so this isn't an issue in production.
 
-## 2. Get an Anthropic API key
+## 2. Get an Gemini API key
 
-1. Go to [console.anthropic.com](https://console.anthropic.com) and sign up
+1. Go to [aistudio.google.com]([https://aistudio.google.com]) and sign up
    / log in.
 2. Create an API key under **Settings → API Keys**.
-3. Note that API usage is billed separately from any Claude.ai subscription —
-   check current pricing on the console before generating a lot of courses.
-4. Set it as `ANTHROPIC_API_KEY` in your `.env` (local) or in Vercel's
+3. Set it as `GEMINI_API_KEY` in your `.env` (local) or in Vercel's
    environment variables (production).
 
 Without this key, everything else in the app (accounts, saving/editing
@@ -96,8 +94,7 @@ if you try to generate a course, lesson, or quiz.
    (**Settings → Environment Variables**):
    - `DATABASE_URL` — see below, this is the important one.
    - `JWT_SECRET` — a random string (`python3 -c "import secrets; print(secrets.token_hex(32))"`).
-   - `ANTHROPIC_API_KEY` — from step 2.
-   - `ANTHROPIC_MODEL` — optional, defaults to `claude-sonnet-5`.
+   - `GEMINI_API_KEY` — from step 2.
 5. Deploy.
 
 ### About the database on Vercel
