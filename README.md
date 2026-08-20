@@ -11,8 +11,8 @@ ready to deploy on Vercel.
   the token, sent as `Authorization: Bearer <token>`).
 - **Courses live in a database**, not per-browser storage — so your courses
   follow you across devices/browsers as long as you log into the same account.
-- **AI generation happens server-side.** Your Anthropic API key never touches
-  the browser; the backend calls the Anthropic API on the frontend's behalf.
+- **AI generation happens server-side.** Your Gemini API key never touches
+  the browser; the backend calls the Gemini API on the frontend's behalf.
 
 ## Project layout
 
