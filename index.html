@@ -162,6 +162,10 @@
   .video-frame{position:relative;padding-top:56.25%;background:#EAEDF7;border-radius:12px;overflow:hidden;border:1px solid var(--line);}
   .video-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:none;}
   .video-fallback{font-size:12.5px;margin-top:8px;color:var(--muted);}
+  .blog-link-row{
+    padding:14px 16px;background:#F7F7FC;border:1px solid var(--line);border-radius:12px;font-size:14px;
+  }
+  .blog-link-row a{font-weight:600;word-break:break-word;}
   .module-actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:20px;border-top:1px solid var(--line);}
 
   /* Constellation loader */
@@ -522,6 +526,21 @@ function escapeHTML(str){
   return d.innerHTML;
 }
 
+function escapeAttr(str){
+  return (str||'').replace(/"/g, '&quot;');
+}
+
+function shortenUrl(url){
+  try{
+    const u = new URL(url);
+    let label = u.hostname.replace(/^www\./, '') + u.pathname;
+    if(label.length > 60) label = label.slice(0, 57) + '…';
+    return label;
+  }catch(e){
+    return url;
+  }
+}
+
 /* ---------------- AI course generation ---------------- */
 el('form-seed').addEventListener('submit', async (e)=>{
   e.preventDefault();
@@ -689,6 +708,10 @@ function renderModuleMain(course){
         <label for="edit-mod-video">Video search query</label>
         <input id="edit-mod-video" value="${escapeHTML(module.videoQuery||'')}" />
       </div>
+      <div class="edit-field">
+        <label for="edit-mod-blog">Article search query</label>
+        <input id="edit-mod-blog" value="${escapeHTML(module.blogQuery||'')}" />
+      </div>
       <div class="edit-row-actions">
         <button class="btn btn-primary btn-sm" id="save-mod-edit">Save changes</button>
         <button class="btn btn-ghost btn-sm" id="cancel-mod-edit">Cancel</button>
@@ -701,7 +724,8 @@ function renderModuleMain(course){
           body:{
             title: el('edit-mod-title').value.trim() || module.title,
             notes: el('edit-mod-notes').value,
-            videoQuery: el('edit-mod-video').value.trim()
+            videoQuery: el('edit-mod-video').value.trim(),
+            blogQuery: el('edit-mod-blog').value.trim()
           }
         });
         moduleEditing = false;
@@ -714,6 +738,10 @@ function renderModuleMain(course){
 
   const notesHtml = (typeof marked !== 'undefined') ? marked.parse(module.notes||'') : (module.notes||'');
   const query = encodeURIComponent(module.videoQuery || module.title);
+  const blogSearchQuery = encodeURIComponent(module.blogQuery || module.title);
+  const blogLinkHtml = module.blogUrl
+    ? `<a href="${escapeAttr(module.blogUrl)}" target="_blank" rel="noopener">${escapeHTML(shortenUrl(module.blogUrl))} ↗</a>`
+    : `<a href="https://duckduckgo.com/?q=${blogSearchQuery}" target="_blank" rel="noopener">Search for an article on this ↗</a>`;
   main.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
       <h3 style="flex:1;">${escapeHTML(module.title)}</h3>
@@ -730,6 +758,10 @@ function renderModuleMain(course){
         <iframe src="https://www.youtube.com/embed?listType=search&list=${query}" allow="encrypted-media" allowfullscreen loading="lazy"></iframe>
       </div>
       <div class="video-fallback">If nothing loads above, <a href="https://www.youtube.com/results?search_query=${query}" target="_blank" rel="noopener">search this on YouTube directly ↗</a></div>
+    </div>
+    <div class="video-block">
+      <div class="label">Related article</div>
+      <div class="blog-link-row">${blogLinkHtml}</div>
     </div>
     <div class="quiz-block" id="quiz-block">
       <div class="label">Check your understanding</div>
