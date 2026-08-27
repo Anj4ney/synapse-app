@@ -49,8 +49,20 @@ async def get_youtube_video_id(query: str) -> str:
 _BLOG_BLOCKED_DOMAINS = (
     "youtube.com", "youtu.be", "duckduckgo.com", "facebook.com",
     "twitter.com", "x.com", "instagram.com", "pinterest.com", "tiktok.com",
-    "reddit.com",
+    "reddit.com", "bing.com", "google.com",
 )
+
+# Some sites/browsers reject requests that don't look like a real browser.
+# Rotating between a couple of common, realistic User-Agents (and retrying
+# once on failure) makes the scrapers noticeably less flaky.
+_SCRAPE_USER_AGENTS = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+)
+
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY")
 
 
 def _resolve_ddg_redirect(href: str) -> str:
@@ -73,31 +85,99 @@ def _looks_like_article(url: str) -> bool:
     return bool(host) and not any(blocked in host for blocked in _BLOG_BLOCKED_DOMAINS)
 
 
-async def get_blog_link(query: str) -> str:
-    """Searches the web and returns a real, relevant article/blog URL for a
-    subtopic, using the same fetch-and-verify approach as the YouTube lookup."""
-    if not query:
+async def _get_with_retry(client: httpx.AsyncClient, url: str) -> httpx.Response | None:
+    """GETs a URL, retrying once with a different User-Agent if the first
+    attempt fails or gets blocked (non-200)."""
+    last_resp = None
+    for ua in _SCRAPE_USER_AGENTS:
+        try:
+            resp = await client.get(url, headers={"User-Agent": ua})
+            if resp.status_code == 200:
+                return resp
+            last_resp = resp
+        except Exception:
+            continue
+    return last_resp
+
+
+async def _search_duckduckgo(client: httpx.AsyncClient, query: str) -> str:
+    """Layer 1: scrape DuckDuckGo's no-JS HTML results page."""
+    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    resp = await _get_with_retry(client, url)
+    if not resp or resp.status_code != 200:
+        return ""
+    raw_hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', resp.text)
+    for raw_href in raw_hrefs:
+        link = _resolve_ddg_redirect(raw_href)
+        if link and _looks_like_article(link):
+            return link
+    return ""
+
+
+async def _search_bing(client: httpx.AsyncClient, query: str) -> str:
+    """Layer 2: scrape Bing's HTML results page as a fallback source, in
+    case DuckDuckGo is unreachable, rate-limited, or changes its markup."""
+    url = f"https://www.bing.com/search?q={urllib.parse.quote(query)}&count=10"
+    resp = await _get_with_retry(client, url)
+    if not resp or resp.status_code != 200:
+        return ""
+    # Bing marks organic results with <li class="b_algo">...<a href="...">
+    raw_hrefs = re.findall(r'<li class="b_algo"[^>]*>.*?<a href="([^"]+)"', resp.text, re.DOTALL)
+    for raw_href in raw_hrefs:
+        if raw_href and _looks_like_article(raw_href):
+            return raw_href
+    return ""
+
+
+async def _search_brave_api(client: httpx.AsyncClient, query: str) -> str:
+    """Layer 3: a real search API (Brave Search) used as the final,
+    most-reliable fallback if BRAVE_API_KEY is configured. Brave offers a
+    free tier (see https://brave.com/search/api/) - set BRAVE_API_KEY as an
+    environment variable to enable this layer."""
+    if not BRAVE_API_KEY:
+        return ""
+    url = "https://api.search.brave.com/res/v1/web/search"
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": BRAVE_API_KEY,
+    }
+    try:
+        resp = await client.get(url, headers=headers, params={"q": query, "count": 10})
+    except Exception as e:
+        print(f"Error querying Brave Search API for '{query}': {e}")
+        return ""
+    if resp.status_code != 200:
         return ""
     try:
-        encoded_query = urllib.parse.quote(query)
-        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-        }
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
+        results = resp.json().get("web", {}).get("results", [])
+    except Exception:
+        return ""
+    for item in results:
+        link = item.get("url", "")
+        if link and _looks_like_article(link):
+            return link
+    return ""
 
-        if resp.status_code == 200:
-            raw_hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', resp.text)
-            for raw_href in raw_hrefs:
-                link = _resolve_ddg_redirect(raw_href)
-                if link and _looks_like_article(link):
+
+async def get_blog_link(query: str) -> str:
+    """Finds a real, relevant article/blog URL for a subtopic so the user
+    is taken straight to a specific page instead of a search results page.
+
+    Tries three layers in order, falling through only if one fails:
+      1. DuckDuckGo HTML scrape (no key required)
+      2. Bing HTML scrape (no key required, different engine as backup)
+      3. Brave Search API (requires BRAVE_API_KEY env var, most reliable)
+    """
+    if not query:
+        return ""
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        for search_fn in (_search_duckduckgo, _search_bing, _search_brave_api):
+            try:
+                link = await search_fn(client, query)
+                if link:
                     return link
-    except Exception as e:
-        print(f"Error fetching blog link for '{query}': {e}")
+            except Exception as e:
+                print(f"Error in {search_fn.__name__} for '{query}': {e}")
     return ""
 
 
