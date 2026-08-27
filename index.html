@@ -184,6 +184,10 @@
   .mindmap-container svg{width:100%;height:auto;display:block;}
   .mm-node{transition:opacity .12s ease;}
   .mm-node:hover{opacity:0.85;}
+  .mm-sub{transition:opacity .12s ease, r .12s ease;}
+  .mm-sub-expanded{stroke:#3B4374;stroke-width:2px;}
+  .mm-branch{animation:mmBranchIn .16s ease;}
+  @keyframes mmBranchIn{from{opacity:0;}to{opacity:1;}}
   .module-actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:20px;border-top:1px solid var(--line);}
 
   /* Constellation loader */
@@ -376,7 +380,7 @@
         <span class="label" style="margin:0;">Course mind map</span>
         <button class="btn btn-ghost btn-sm" id="close-mindmap">✕ Close</button>
       </div>
-      <div class="mindmap-hint">Click any lesson bubble to jump straight to it.</div>
+      <div class="mindmap-hint">Click any lesson bubble to jump straight to it. Click a subtopic to branch it into more subtopics — click again to collapse.</div>
       <div id="mindmap-container" class="mindmap-container"></div>
     </div>
   </div>
@@ -1054,23 +1058,118 @@ function buildMindMapSVG(course){
       const subAngle = angle + offset;
       const sx = cx + subRadius*Math.cos(subAngle);
       const sy = cy + subRadius*Math.sin(subAngle);
-      parts.push(`<circle cx="${sx}" cy="${sy}" r="5" fill="#8891B8"/>`);
+      const subPath = `${i}-${pi}`;
+      parts.push(`<circle class="mm-node mm-sub" data-path="${subPath}" data-text="${escapeHTML(pt)}" data-level="1" cx="${sx}" cy="${sy}" r="5" fill="#8891B8" style="cursor:pointer;"/>`);
       const labelLines = wrapLabel(pt, 20);
       // Flip label above the dot when it's in the top half, so it never runs past the canvas edge
       const labelAbove = sy < cy;
       const baseY = labelAbove ? sy - 12 - (labelLines.length-1)*13 : sy + 16;
-      parts.push(svgTextLines(labelLines, sx, baseY, { size: 10, weight: 500, color: '#5B6488', lineHeight: 13 }));
+      parts.push(`<g style="pointer-events:none;">${svgTextLines(labelLines, sx, baseY, { size: 10, weight: 500, color: '#5B6488', lineHeight: 13 })}</g>`);
     });
   });
 
-  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+  return `<svg id="mm-svg" data-cx="${cx}" data-cy="${cy}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+}
+
+/* ---- Recursive subtopic branching ---- */
+const MM_MAX_DEPTH = 4;       // how many branching levels a subtopic can expand into
+const MM_RADIUS_STEP = 92;    // outward distance added per branching level
+let mmExpanded = {};          // path -> { group: <g> element }
+
+const MM_STOPWORDS = new Set(['the','a','an','of','to','in','on','for','with','and','or','is','are','that','this','as','by','at','from','it','be','can','which','your','you','into','via','using']);
+
+// Break a subtopic's label into smaller related pieces so it can branch further, like a tree.
+function deriveSubtopics(text){
+  const clean = (text||'').replace(/[.!?]+$/,'').trim();
+  if(!clean) return [];
+
+  // Prefer natural delimiters that already separate related ideas
+  let parts = clean.split(/,| and | & |;|\/|:| - /i).map(s=>s.trim()).filter(s=>s.length>1);
+  if(parts.length >= 2) return parts.slice(0, 4);
+
+  // Otherwise fall back to grouping the remaining meaningful words into short phrases
+  const words = clean.split(/\s+/).filter(w=>w.length>2 && !MM_STOPWORDS.has(w.toLowerCase()));
+  if(words.length <= 1) return [];
+  const chunks = [];
+  for(let i=0; i<words.length; i+=2){
+    chunks.push(words.slice(i, i+2).join(' '));
+  }
+  return chunks.filter(c=>c.toLowerCase() !== clean.toLowerCase()).slice(0, 4);
+}
+
+function collapseMindNode(path){
+  if(!mmExpanded[path]) return;
+  // Collapse any deeper branches under this node first
+  Object.keys(mmExpanded).filter(k=>k.startsWith(path+'-')).forEach(k=>collapseMindNode(k));
+  mmExpanded[path].group.remove();
+  delete mmExpanded[path];
+}
+
+function expandMindNode(svg, node){
+  const path = node.dataset.path;
+  const level = parseInt(node.dataset.level, 10);
+  if(level >= MM_MAX_DEPTH) return;
+
+  const children = deriveSubtopics(node.dataset.text);
+  if(!children.length) return;
+
+  const cx = parseFloat(svg.dataset.cx), cy = parseFloat(svg.dataset.cy);
+  const nx = parseFloat(node.getAttribute('cx')), ny = parseFloat(node.getAttribute('cy'));
+  const baseAngle = Math.atan2(ny - cy, nx - cx);
+  const parentR = Math.hypot(nx - cx, ny - cy);
+  const childR = parentR + MM_RADIUS_STEP;
+  const spread = Math.min(0.85, 0.26 * children.length);
+  const r = Math.max(2.5, 5 - level);
+
+  const parts = [`<g class="mm-branch" data-parent-path="${path}">`];
+  children.forEach((childText, ci)=>{
+    const offset = children.length>1 ? (ci - (children.length-1)/2) * (spread/(children.length-1)) : 0;
+    const angle = baseAngle + offset;
+    const sx = cx + childR*Math.cos(angle);
+    const sy = cy + childR*Math.sin(angle);
+    const childPath = `${path}-${ci}`;
+
+    parts.push(`<line x1="${nx}" y1="${ny}" x2="${sx}" y2="${sy}" stroke="#DDE2F0" stroke-width="1.2" stroke-dasharray="2,3"/>`);
+    parts.push(`<circle class="mm-node mm-sub" data-path="${childPath}" data-text="${escapeHTML(childText)}" data-level="${level+1}" cx="${sx}" cy="${sy}" r="${r}" fill="#8891B8" style="cursor:pointer;"/>`);
+    const labelLines = wrapLabel(childText, 18);
+    const labelAbove = sy < cy;
+    const baseY = labelAbove ? sy - 10 - (labelLines.length-1)*12 : sy + 14;
+    parts.push(`<g style="pointer-events:none;">${svgTextLines(labelLines, sx, baseY, { size: 9.5, weight: 500, color: '#5B6488', lineHeight: 12 })}</g>`);
+  });
+  parts.push('</g>');
+
+  svg.insertAdjacentHTML('beforeend', parts.join(''));
+  const group = svg.querySelector(`.mm-branch[data-parent-path="${path}"]`);
+  mmExpanded[path] = { group };
+
+  group.querySelectorAll('.mm-sub').forEach(childNode=>{
+    attachSubtopicListener(svg, childNode);
+  });
+
+  node.classList.add('mm-sub-expanded');
+}
+
+function attachSubtopicListener(svg, node){
+  node.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    const path = node.dataset.path;
+    if(mmExpanded[path]){
+      collapseMindNode(path);
+      node.classList.remove('mm-sub-expanded');
+    } else {
+      expandMindNode(svg, node);
+    }
+  });
 }
 
 function openMindMap(){
   const course = currentCourse();
   if(!course) return;
+  mmExpanded = {};
   el('mindmap-container').innerHTML = buildMindMapSVG(course);
-  el('mindmap-container').querySelectorAll('.mm-node').forEach(node=>{
+  const svg = el('mindmap-container').querySelector('#mm-svg');
+
+  svg.querySelectorAll('[data-modindex]').forEach(node=>{
     node.addEventListener('click', ()=>{
       activeModuleIndex = parseInt(node.dataset.modindex, 10);
       moduleEditing = false;
@@ -1078,11 +1177,17 @@ function openMindMap(){
       renderCourseView();
     });
   });
+
+  svg.querySelectorAll('.mm-sub').forEach(node=>{
+    attachSubtopicListener(svg, node);
+  });
+
   el('mindmap-modal').classList.remove('hidden');
 }
 
 function closeMindMap(){
   el('mindmap-modal').classList.add('hidden');
+  mmExpanded = {};
 }
 
 el('show-mindmap').addEventListener('click', openMindMap);
