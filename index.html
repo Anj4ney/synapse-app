@@ -987,12 +987,26 @@ el('print-course').addEventListener('click', ()=>{
 /* ---- Mind map ---- */
 function extractKeyPoints(notes){
   if(!notes) return [];
-  return notes
+
+  // Preferred path: real markdown bullet lines.
+  const bulletLines = notes
     .split('\n')
     .map(l=>l.trim())
     .filter(l=>/^[-*]\s+/.test(l))
-    .map(l=>l.replace(/^[-*]\s+/, '').replace(/\*\*/g, '').replace(/`/g, ''))
-    .slice(0, 3);
+    .map(l=>l.replace(/^[-*]\s+/, '').replace(/\*\*/g, '').replace(/`/g, '').trim())
+    .filter(Boolean);
+  if(bulletLines.length) return bulletLines.slice(0, 3);
+
+  // Fallback: the AI sometimes writes plain prose instead of bullets, which
+  // used to mean zero key points -> no subtopic dots -> the mind map had
+  // nothing to branch into. Split into sentences instead so there's always
+  // something to expand.
+  const plain = notes.replace(/\*\*/g, '').replace(/`/g, '').replace(/\n+/g, ' ').trim();
+  const sentences = plain
+    .split(/(?<=[.!?])\s+/)
+    .map(s=>s.trim())
+    .filter(s=>s.length > 8);
+  return sentences.slice(0, 3);
 }
 
 function wrapLabel(text, maxCharsPerLine){
