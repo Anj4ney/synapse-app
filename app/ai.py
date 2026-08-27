@@ -5,7 +5,7 @@ import urllib.parse
 import httpx
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
@@ -228,10 +228,16 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(url, headers=headers, json=payload)
     except httpx.HTTPError as e:
-        raise AIError(f"Could not reach the Gemini API: {e}")
+        # str(e) is sometimes empty for connection-level errors, so include
+        # the exception type/repr too - that's what actually shows up in
+        # Vercel's function logs and makes this debuggable.
+        detail = str(e) or repr(e)
+        raise AIError(f"Could not reach the Gemini API ({type(e).__name__}): {detail}")
 
     if resp.status_code != 200:
-        raise AIError(f"Gemini API error ({resp.status_code}): {resp.text[:300]}")
+        raise AIError(
+            f"Gemini API error ({resp.status_code}) using model '{GEMINI_MODEL}': {resp.text[:300]}"
+        )
 
     data = resp.json()
     candidates = data.get("candidates", [])
