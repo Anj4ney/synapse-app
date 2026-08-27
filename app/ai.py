@@ -214,27 +214,79 @@ async def _enrich_module(m: dict, fallback_topic: str) -> dict:
     return m
 
 
+def _escape_raw_control_chars_in_strings(s: str) -> str:
+    """Gemini sometimes emits a literal newline/tab inside a JSON string
+    value (easy to trigger once we ask for multi-line bulleted notes)
+    instead of properly escaping it as \\n / \\t. Strict JSON treats a raw
+    control character inside a string as the string ending there, which
+    corrupts everything that follows and surfaces as a confusing
+    "Expecting property name" error far later in the payload. This walks
+    the text once, tracking whether we're inside a string literal, and
+    escapes any offending raw control characters it finds there.
+    """
+    out = []
+    in_string = False
+    escaped = False
+    for ch in s:
+        if in_string:
+            if escaped:
+                out.append(ch)
+                escaped = False
+            elif ch == "\\":
+                out.append(ch)
+                escaped = True
+            elif ch == '"':
+                in_string = False
+                out.append(ch)
+            elif ch == "\n":
+                out.append("\\n")
+            elif ch == "\r":
+                out.append("\\r")
+            elif ch == "\t":
+                out.append("\\t")
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+    return "".join(out)
+
+
 def _clean_json(raw: str) -> dict:
     raw = raw.strip()
     if "```" in raw:
         match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, re.IGNORECASE)
         if match:
             raw = match.group(1).strip()
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict) and len(data) == 1 and isinstance(list(data.values())[0], dict):
-            inner = list(data.values())[0]
-            if "modules" in inner or "title" in inner:
-                return inner
-        return data
-    except Exception as e:
-        match = re.search(r"(\{[\s\S]*\})", raw)
-        if match:
-            try:
-                return json.loads(match.group(1).strip())
-            except Exception:
-                pass
-        raise AIError(f"Could not parse JSON response: {e}")
+
+    # Try the raw text first, then a sanitized version that fixes the most
+    # common way Gemini's JSON output gets corrupted (raw control characters
+    # left inside string values). Whichever succeeds first wins.
+    candidates = [raw]
+    sanitized = _escape_raw_control_chars_in_strings(raw)
+    if sanitized != raw:
+        candidates.append(sanitized)
+
+    last_err = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict) and len(data) == 1 and isinstance(list(data.values())[0], dict):
+                inner = list(data.values())[0]
+                if "modules" in inner or "title" in inner:
+                    return inner
+            return data
+        except Exception as e:
+            last_err = e
+            match = re.search(r"(\{[\s\S]*\})", candidate)
+            if match:
+                try:
+                    return json.loads(match.group(1).strip())
+                except Exception as e2:
+                    last_err = e2
+
+    raise AIError(f"Could not parse JSON response: {last_err}")
 
 
 async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000) -> str:
