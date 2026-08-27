@@ -35,7 +35,7 @@ async def get_youtube_video_id(query: str) -> str:
         }
         async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
             resp = await client.get(url, headers=headers)
-            
+
         if resp.status_code == 200:
             matches = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', resp.text)
             if matches:
@@ -43,6 +43,61 @@ async def get_youtube_video_id(query: str) -> str:
                 return matches[0]
     except Exception as e:
         print(f"Error fetching YouTube ID for '{query}': {e}")
+    return ""
+
+
+_BLOG_BLOCKED_DOMAINS = (
+    "youtube.com", "youtu.be", "duckduckgo.com", "facebook.com",
+    "twitter.com", "x.com", "instagram.com", "pinterest.com", "tiktok.com",
+    "reddit.com",
+)
+
+
+def _resolve_ddg_redirect(href: str) -> str:
+    """DuckDuckGo's HTML results wrap outbound links in a redirect URL
+    like //duckduckgo.com/l/?uddg=<encoded-target>&rut=... — unwrap it."""
+    if href.startswith("//"):
+        href = "https:" + href
+    parsed = urllib.parse.urlparse(href)
+    qs = urllib.parse.parse_qs(parsed.query)
+    if "uddg" in qs and qs["uddg"]:
+        return urllib.parse.unquote(qs["uddg"][0])
+    return href
+
+
+def _looks_like_article(url: str) -> bool:
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    return bool(host) and not any(blocked in host for blocked in _BLOG_BLOCKED_DOMAINS)
+
+
+async def get_blog_link(query: str) -> str:
+    """Searches the web and returns a real, relevant article/blog URL for a
+    subtopic, using the same fetch-and-verify approach as the YouTube lookup."""
+    if not query:
+        return ""
+    try:
+        encoded_query = urllib.parse.quote(query)
+        url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+        }
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+
+        if resp.status_code == 200:
+            raw_hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', resp.text)
+            for raw_href in raw_hrefs:
+                link = _resolve_ddg_redirect(raw_href)
+                if link and _looks_like_article(link):
+                    return link
+    except Exception as e:
+        print(f"Error fetching blog link for '{query}': {e}")
     return ""
 
 
@@ -118,7 +173,9 @@ async def generate_course(topic: str) -> dict:
         "- Description: 20 words or fewer.\n"
         "- Exactly 4 modules ordered from foundational to advanced.\n"
         "- Module notes: 60-90 words in markdown.\n"
-        "- Video query: specific YouTube search phrase (8 words or fewer)."
+        "- Video query: specific YouTube search phrase (8 words or fewer).\n"
+        "- Blog query: a specific search phrase to find one good written article "
+        "or blog post on this subtopic (8 words or fewer)."
     )
     course_schema = {
         "type": "OBJECT",
@@ -133,8 +190,9 @@ async def generate_course(topic: str) -> dict:
                         "title": {"type": "STRING"},
                         "notes": {"type": "STRING"},
                         "videoQuery": {"type": "STRING"},
+                        "blogQuery": {"type": "STRING"},
                     },
-                    "required": ["title", "notes", "videoQuery"],
+                    "required": ["title", "notes", "videoQuery", "blogQuery"],
                 },
             },
         },
@@ -152,20 +210,27 @@ async def generate_course(topic: str) -> dict:
         m["quiz"] = None
         # Finds and attaches the real YouTube video ID:
         m["videoId"] = await get_youtube_video_id(m.get("videoQuery", topic))
-        
+        # Finds and attaches a real, relevant blog/article URL:
+        m["blogUrl"] = await get_blog_link(m.get("blogQuery") or m.get("videoQuery", topic))
+
     return parsed
 
 
 async def generate_module(course_title: str, lesson_topic: str) -> dict:
-    prompt = f'Course: "{course_title}". Write the lesson module for: "{lesson_topic}".'
+    prompt = (
+        f'Course: "{course_title}". Write the lesson module for: "{lesson_topic}".\n'
+        "Also include a blog query: a specific search phrase to find one good "
+        "written article or blog post on this subtopic (8 words or fewer)."
+    )
     module_schema = {
         "type": "OBJECT",
         "properties": {
             "title": {"type": "STRING"},
             "notes": {"type": "STRING"},
             "videoQuery": {"type": "STRING"},
+            "blogQuery": {"type": "STRING"},
         },
-        "required": ["title", "notes", "videoQuery"],
+        "required": ["title", "notes", "videoQuery", "blogQuery"],
     }
 
     raw = await _call_gemini(prompt, schema=module_schema, max_tokens=2000)
@@ -177,6 +242,7 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
     parsed["completed"] = False
     parsed["quiz"] = None
     parsed["videoId"] = await get_youtube_video_id(parsed.get("videoQuery", lesson_topic))
+    parsed["blogUrl"] = await get_blog_link(parsed.get("blogQuery") or parsed.get("videoQuery", lesson_topic))
     return parsed
 
 
