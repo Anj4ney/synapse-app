@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -5,7 +6,7 @@ import urllib.parse
 import httpx
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
@@ -33,7 +34,7 @@ async def get_youtube_video_id(query: str) -> str:
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
         }
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=_LOOKUP_TIMEOUT, follow_redirects=True) as client:
             resp = await client.get(url, headers=headers)
 
         if resp.status_code == 200:
@@ -63,6 +64,16 @@ _SCRAPE_USER_AGENTS = (
 )
 
 BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY")
+
+# Serverless platforms (Vercel etc.) kill the whole function once its time
+# limit is hit, and the browser just sees a dead connection ("Failed to
+# fetch") rather than a clean error. These enrichment lookups (YouTube ID +
+# blog link) are "nice to have", not core to the course, so every layer gets
+# a short, hard timeout and the whole per-module enrichment step gets an
+# overall budget - if it runs out, we just fall back to an empty string
+# instead of blocking the response.
+_LOOKUP_TIMEOUT = 5.0          # seconds per individual HTTP request
+_ENRICH_BUDGET_PER_MODULE = 8.0  # seconds max spent finding video+blog for one module
 
 
 def _resolve_ddg_redirect(href: str) -> str:
@@ -170,7 +181,7 @@ async def get_blog_link(query: str) -> str:
     """
     if not query:
         return ""
-    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=_LOOKUP_TIMEOUT, follow_redirects=True) as client:
         for search_fn in (_search_duckduckgo, _search_bing, _search_brave_api):
             try:
                 link = await search_fn(client, query)
@@ -179,6 +190,28 @@ async def get_blog_link(query: str) -> str:
             except Exception as e:
                 print(f"Error in {search_fn.__name__} for '{query}': {e}")
     return ""
+
+
+async def _enrich_module(m: dict, fallback_topic: str) -> dict:
+    """Attaches videoId + blogUrl to a module dict, in parallel, with a hard
+    overall time budget so a slow/unreachable search engine can never stall
+    course generation long enough to trip a serverless function timeout."""
+    video_task = asyncio.create_task(get_youtube_video_id(m.get("videoQuery", fallback_topic)))
+    blog_task = asyncio.create_task(
+        get_blog_link(m.get("blogQuery") or m.get("videoQuery", fallback_topic))
+    )
+    try:
+        video_id, blog_url = await asyncio.wait_for(
+            asyncio.gather(video_task, blog_task, return_exceptions=True),
+            timeout=_ENRICH_BUDGET_PER_MODULE,
+        )
+    except asyncio.TimeoutError:
+        for t in (video_task, blog_task):
+            t.cancel()
+        video_id, blog_url = "", ""
+    m["videoId"] = video_id if isinstance(video_id, str) else ""
+    m["blogUrl"] = blog_url if isinstance(blog_url, str) else ""
+    return m
 
 
 def _clean_json(raw: str) -> dict:
@@ -294,10 +327,13 @@ async def generate_course(topic: str) -> dict:
     for m in parsed["modules"]:
         m["completed"] = False
         m["quiz"] = None
-        # Finds and attaches the real YouTube video ID:
-        m["videoId"] = await get_youtube_video_id(m.get("videoQuery", topic))
-        # Finds and attaches a real, relevant blog/article URL:
-        m["blogUrl"] = await get_blog_link(m.get("blogQuery") or m.get("videoQuery", topic))
+
+    # Enrich all modules with a real YouTube video ID + blog/article URL at
+    # the same time (previously this ran one module at a time, each doing up
+    # to ~6 sequential scraping requests - easily 100s+ for a 4-module
+    # course, which is enough to trip a serverless function timeout and
+    # surface as "Failed to fetch" on the client).
+    await asyncio.gather(*(_enrich_module(m, topic) for m in parsed["modules"]))
 
     return parsed
 
@@ -327,8 +363,7 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
 
     parsed["completed"] = False
     parsed["quiz"] = None
-    parsed["videoId"] = await get_youtube_video_id(parsed.get("videoQuery", lesson_topic))
-    parsed["blogUrl"] = await get_blog_link(parsed.get("blogQuery") or parsed.get("videoQuery", lesson_topic))
+    await _enrich_module(parsed, lesson_topic)
     return parsed
 
 
