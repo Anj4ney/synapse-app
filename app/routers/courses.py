@@ -136,7 +136,7 @@ async def add_module(
 
 
 @router.put("/{course_id}/modules/{index}", response_model=schemas.CourseOut)
-def update_module(
+async def update_module(
     course_id: int,
     index: int,
     payload: schemas.ModuleUpdateIn,
@@ -154,7 +154,12 @@ def update_module(
     if payload.notes is not None:
         mod["notes"] = payload.notes
     if payload.videoQuery is not None:
-        mod["videoQuery"] = payload.videoQuery.strip()
+        new_query = payload.videoQuery.strip()
+        if new_query != mod.get("videoQuery", ""):
+            mod["videoQuery"] = new_query
+            # Re-resolve to a real playable video ID whenever the search
+            # phrase actually changes, so the embedded video stays in sync.
+            mod["videoId"] = await ai.get_youtube_video_id(new_query)
     modules[index] = mod
     course.modules = modules
     db.commit()
