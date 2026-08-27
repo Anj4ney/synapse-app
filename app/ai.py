@@ -291,9 +291,12 @@ async def generate_course(topic: str) -> dict:
         "- Title: concise course title.\n"
         "- Description: 20 words or fewer.\n"
         "- Exactly 4 modules ordered from foundational to advanced.\n"
-        "- Module notes: 60-90 words in markdown, written as exactly 3 "
-        "markdown bullet points (each line starting with '- '), one key "
-        "idea per bullet.\n"
+        "- Module notes: 80-130 words in markdown, structured as exactly 3 "
+        "top-level bullet points (each line starting with '- '), one key "
+        "idea per bullet. Under EACH top-level bullet, add 2 nested "
+        "sub-bullets indented with exactly 2 spaces (each line starting "
+        "with '  - ') giving a supporting detail, example, or explanation "
+        "for that point.\n"
         "- Video query: specific YouTube search phrase (8 words or fewer).\n"
         "- Blog query: a specific search phrase to find one good written article "
         "or blog post on this subtopic (8 words or fewer)."
@@ -343,8 +346,12 @@ async def generate_course(topic: str) -> dict:
 async def generate_module(course_title: str, lesson_topic: str) -> dict:
     prompt = (
         f'Course: "{course_title}". Write the lesson module for: "{lesson_topic}".\n'
-        "Notes: 60-90 words in markdown, written as exactly 3 markdown bullet "
-        "points (each line starting with '- '), one key idea per bullet.\n"
+        "Notes: 80-130 words in markdown, structured as exactly 3 top-level "
+        "bullet points (each line starting with '- '), one key idea per "
+        "bullet. Under EACH top-level bullet, add 2 nested sub-bullets "
+        "indented with exactly 2 spaces (each line starting with '  - ') "
+        "giving a supporting detail, example, or explanation for that "
+        "point.\n"
         "Also include a blog query: a specific search phrase to find one good "
         "written article or blog post on this subtopic (8 words or fewer)."
     )
