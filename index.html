@@ -166,6 +166,24 @@
     padding:14px 16px;background:#F7F7FC;border:1px solid var(--line);border-radius:12px;font-size:14px;
   }
   .blog-link-row a{font-weight:600;word-break:break-word;}
+
+  /* ---------- Mind map ---------- */
+  .mindmap-modal{
+    position:fixed;inset:0;background:rgba(20,26,49,0.55);z-index:50;
+    display:flex;align-items:center;justify-content:center;padding:24px;
+  }
+  .mindmap-panel{
+    background:var(--paper-2);border-radius:18px;box-shadow:var(--shadow);
+    width:100%;max-width:1100px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;
+  }
+  .mindmap-panel-head{
+    display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line);
+  }
+  .mindmap-hint{padding:10px 22px 0;font-size:12.5px;color:var(--muted);}
+  .mindmap-container{flex:1;overflow:auto;padding:12px;}
+  .mindmap-container svg{width:100%;height:auto;display:block;}
+  .mm-node{transition:opacity .12s ease;}
+  .mm-node:hover{opacity:0.85;}
   .module-actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px;padding-top:20px;border-top:1px solid var(--line);}
 
   /* Constellation loader */
@@ -339,6 +357,7 @@
       </div>
       <div class="course-actions-row">
         <button class="btn btn-ghost btn-sm" id="toggle-course-edit">Edit course</button>
+        <button class="btn btn-ghost btn-sm" id="show-mindmap">🧠 Mind map</button>
         <button class="btn btn-ghost btn-sm" id="export-md">Download notes (.md)</button>
         <button class="btn btn-ghost btn-sm" id="print-course">Print / Save PDF</button>
       </div>
@@ -350,6 +369,17 @@
       <p class="footer-note">Notes and video suggestions are AI-generated — double-check anything important before you rely on it.</p>
     </div>
   </section>
+
+  <div id="mindmap-modal" class="mindmap-modal hidden">
+    <div class="mindmap-panel">
+      <div class="mindmap-panel-head">
+        <span class="label" style="margin:0;">Course mind map</span>
+        <button class="btn btn-ghost btn-sm" id="close-mindmap">✕ Close</button>
+      </div>
+      <div class="mindmap-hint">Click any lesson bubble to jump straight to it.</div>
+      <div id="mindmap-container" class="mindmap-container"></div>
+    </div>
+  </div>
 
 </div>
 
@@ -937,6 +967,128 @@ el('print-course').addEventListener('click', ()=>{
   });
   area.innerHTML = html;
   window.print();
+});
+
+/* ---- Mind map ---- */
+function extractKeyPoints(notes){
+  if(!notes) return [];
+  return notes
+    .split('\n')
+    .map(l=>l.trim())
+    .filter(l=>/^[-*]\s+/.test(l))
+    .map(l=>l.replace(/^[-*]\s+/, '').replace(/\*\*/g, '').replace(/`/g, ''))
+    .slice(0, 3);
+}
+
+function wrapLabel(text, maxCharsPerLine){
+  const words = (text||'').split(' ');
+  const lines = [];
+  let current = '';
+  words.forEach(w=>{
+    if((current + ' ' + w).trim().length > maxCharsPerLine){
+      if(current) lines.push(current.trim());
+      current = w;
+    } else {
+      current = (current + ' ' + w).trim();
+    }
+  });
+  if(current) lines.push(current.trim());
+  return lines.slice(0, 3);
+}
+
+function svgTextLines(lines, x, y, opts={}){
+  const { size=11.5, weight=600, color='#221607', lineHeight=14, family="'Inter',sans-serif" } = opts;
+  const startY = y - ((lines.length-1) * lineHeight)/2;
+  return lines.map((line,i)=>
+    `<text x="${x}" y="${startY + i*lineHeight}" text-anchor="middle" dominant-baseline="middle" font-family="${family}" font-size="${size}" font-weight="${weight}" fill="${color}">${escapeHTML(line)}</text>`
+  ).join('');
+}
+
+function buildMindMapSVG(course){
+  const W = 1050, H = 1000;
+  const cx = W/2, cy = H/2;
+  const moduleRadius = 210;
+  const n = course.modules.length || 1;
+  const parts = [];
+
+  // Connective lines first (so nodes draw on top)
+  const moduleAngles = [];
+  course.modules.forEach((m,i)=>{
+    const angle = (2*Math.PI*i/n) - Math.PI/2;
+    moduleAngles.push(angle);
+    const mx = cx + moduleRadius*Math.cos(angle);
+    const my = cy + moduleRadius*Math.sin(angle);
+    parts.push(`<line x1="${cx}" y1="${cy}" x2="${mx}" y2="${my}" stroke="#DDE2F0" stroke-width="2"/>`);
+
+    const points = extractKeyPoints(m.notes);
+    const subRadius = moduleRadius + 155;
+    const spread = 0.62;
+    points.forEach((pt, pi)=>{
+      const offset = points.length>1 ? (pi - (points.length-1)/2) * (spread/(points.length-1)) : 0;
+      const subAngle = angle + offset;
+      const sx = cx + subRadius*Math.cos(subAngle);
+      const sy = cy + subRadius*Math.sin(subAngle);
+      parts.push(`<line x1="${mx}" y1="${my}" x2="${sx}" y2="${sy}" stroke="#DDE2F0" stroke-width="1.5" stroke-dasharray="3,4"/>`);
+    });
+  });
+
+  // Center node
+  parts.push(`<circle cx="${cx}" cy="${cy}" r="78" fill="#1B2340"/>`);
+  parts.push(svgTextLines(wrapLabel(course.title, 16), cx, cy, { size: 14, weight: 700, color: '#FFFFFF', lineHeight: 17, family: "'Fraunces',serif" }));
+
+  // Module nodes + their key-point sub-nodes
+  course.modules.forEach((m,i)=>{
+    const angle = moduleAngles[i];
+    const mx = cx + moduleRadius*Math.cos(angle);
+    const my = cy + moduleRadius*Math.sin(angle);
+    const fill = m.completed ? '#3FA66B' : '#E8A33D';
+
+    parts.push(`<circle class="mm-node" data-modindex="${i}" cx="${mx}" cy="${my}" r="52" fill="${fill}" style="cursor:pointer;"/>`);
+    parts.push(`<g style="pointer-events:none;">${svgTextLines(wrapLabel(m.title, 15), mx, my, { size: 11.5, weight: 700 })}</g>`);
+
+    const points = extractKeyPoints(m.notes);
+    const subRadius = moduleRadius + 155;
+    const spread = 0.62;
+    points.forEach((pt, pi)=>{
+      const offset = points.length>1 ? (pi - (points.length-1)/2) * (spread/(points.length-1)) : 0;
+      const subAngle = angle + offset;
+      const sx = cx + subRadius*Math.cos(subAngle);
+      const sy = cy + subRadius*Math.sin(subAngle);
+      parts.push(`<circle cx="${sx}" cy="${sy}" r="5" fill="#8891B8"/>`);
+      const labelLines = wrapLabel(pt, 20);
+      // Flip label above the dot when it's in the top half, so it never runs past the canvas edge
+      const labelAbove = sy < cy;
+      const baseY = labelAbove ? sy - 12 - (labelLines.length-1)*13 : sy + 16;
+      parts.push(svgTextLines(labelLines, sx, baseY, { size: 10, weight: 500, color: '#5B6488', lineHeight: 13 }));
+    });
+  });
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">${parts.join('')}</svg>`;
+}
+
+function openMindMap(){
+  const course = currentCourse();
+  if(!course) return;
+  el('mindmap-container').innerHTML = buildMindMapSVG(course);
+  el('mindmap-container').querySelectorAll('.mm-node').forEach(node=>{
+    node.addEventListener('click', ()=>{
+      activeModuleIndex = parseInt(node.dataset.modindex, 10);
+      moduleEditing = false;
+      closeMindMap();
+      renderCourseView();
+    });
+  });
+  el('mindmap-modal').classList.remove('hidden');
+}
+
+function closeMindMap(){
+  el('mindmap-modal').classList.add('hidden');
+}
+
+el('show-mindmap').addEventListener('click', openMindMap);
+el('close-mindmap').addEventListener('click', closeMindMap);
+el('mindmap-modal').addEventListener('click', (e)=>{
+  if(e.target.id === 'mindmap-modal') closeMindMap();
 });
 
 /* ---------------- Boot ---------------- */
