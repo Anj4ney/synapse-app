@@ -30,6 +30,9 @@ class ModuleOut(BaseModel):
     title: str
     notes: str = ""
     videoQuery: str = ""
+    videoId: str = ""
+    blogQuery: str = ""
+    blogUrl: str = ""
     completed: bool = False
     quiz: Optional[Any] = None
 
@@ -51,6 +54,7 @@ class ModuleUpdateIn(BaseModel):
     title: Optional[str] = None
     notes: Optional[str] = None
     videoQuery: Optional[str] = None
+    blogQuery: Optional[str] = None
 
 
 class ModuleCompleteIn(BaseModel):
