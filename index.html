@@ -776,6 +776,17 @@ function renderModuleMain(course){
   const blogLinkHtml = module.blogUrl
     ? `<a href="${escapeAttr(module.blogUrl)}" target="_blank" rel="noopener">${escapeHTML(shortenUrl(module.blogUrl))} ↗</a>`
     : `<a href="https://duckduckgo.com/?q=${blogSearchQuery}" target="_blank" rel="noopener">Search for an article on this ↗</a>`;
+  // If the backend resolved a real video ID, embed that exact video directly.
+  // Otherwise fall back to a search-results embed (better than nothing, but
+  // this should be rare since the backend actively looks up a real video ID).
+  const videoId = (module.videoId || '').trim();
+  const videoIframeSrc = videoId
+    ? `https://www.youtube.com/embed/${encodeURIComponent(videoId)}`
+    : `https://www.youtube.com/embed?listType=search&list=${query}`;
+  const videoWatchUrl = videoId
+    ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`
+    : `https://www.youtube.com/results?search_query=${query}`;
+  const videoFallbackText = videoId ? 'Watch on YouTube directly ↗' : 'search this on YouTube directly ↗';
   main.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
       <h3 style="flex:1;">${escapeHTML(module.title)}</h3>
@@ -789,9 +800,9 @@ function renderModuleMain(course){
     <div class="video-block">
       <div class="label">Related video</div>
       <div class="video-frame">
-        <iframe src="https://www.youtube.com/embed?listType=search&list=${query}" allow="encrypted-media" allowfullscreen loading="lazy"></iframe>
+        <iframe src="${videoIframeSrc}" allow="encrypted-media" allowfullscreen loading="lazy"></iframe>
       </div>
-      <div class="video-fallback">If nothing loads above, <a href="https://www.youtube.com/results?search_query=${query}" target="_blank" rel="noopener">search this on YouTube directly ↗</a></div>
+      <div class="video-fallback">If nothing loads above, <a href="${videoWatchUrl}" target="_blank" rel="noopener">${videoFallbackText}</a></div>
     </div>
     <div class="video-block">
       <div class="label">Related article</div>
