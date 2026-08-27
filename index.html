@@ -1087,14 +1087,19 @@ function deriveSubtopics(text){
   let parts = clean.split(/,| and | & |;|\/|:| - /i).map(s=>s.trim()).filter(s=>s.length>1);
   if(parts.length >= 2) return parts.slice(0, 4);
 
-  // Otherwise fall back to grouping the remaining meaningful words into short phrases
+  // Otherwise fall back to grouping the remaining meaningful words into short phrases.
+  // Short phrases (<=4 words) split one word per chunk so a 2-word subtopic still yields
+  // two children; longer phrases group two words per chunk to keep labels readable.
   const words = clean.split(/\s+/).filter(w=>w.length>2 && !MM_STOPWORDS.has(w.toLowerCase()));
   if(words.length <= 1) return [];
+  const chunkSize = words.length > 4 ? 2 : 1;
   const chunks = [];
-  for(let i=0; i<words.length; i+=2){
-    chunks.push(words.slice(i, i+2).join(' '));
+  for(let i=0; i<words.length; i+=chunkSize){
+    chunks.push(words.slice(i, i+chunkSize).join(' '));
   }
-  return chunks.filter(c=>c.toLowerCase() !== clean.toLowerCase()).slice(0, 4);
+  // A single leftover chunk (e.g. every word got grouped into one bucket) can't branch further
+  if(chunks.length < 2) return [];
+  return chunks.slice(0, 4);
 }
 
 function collapseMindNode(path){
