@@ -59,4 +59,15 @@ def login(payload: schemas.LoginIn, db: Session = Depends(get_db)):
 
 @router.get("/me", response_model=schemas.UserOut)
 def me(current_user: models.User = Depends(get_current_user)):
-    return current_user
+    # id/username serialization is unchanged; xp/level/streak_count are
+    # additive fields. Level is derived on read (xp // 100) rather than
+    # stored, per spec.
+    xp = current_user.xp or 0
+    return schemas.UserOut(
+        id=current_user.id,
+        username=current_user.username,
+        xp=xp,
+        level=xp // 100,
+        streak_count=current_user.streak_count or 0,
+        badges=list(current_user.badges or []),
+    )
