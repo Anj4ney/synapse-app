@@ -395,7 +395,7 @@ async def generate_course(topic: str) -> dict:
     return parsed
 
 
-async def generate_module(course_title: str, lesson_topic: str) -> dict:
+async def generate_module(course_title: str, lesson_topic: str, difficulty: str = None) -> dict:
     prompt = (
         f'Course: "{course_title}". Write the lesson module for: "{lesson_topic}".\n'
         "Notes: 80-130 words in markdown, structured as exactly 3 top-level "
@@ -407,6 +407,21 @@ async def generate_module(course_title: str, lesson_topic: str) -> dict:
         "Also include a blog query: a specific search phrase to find one good "
         "written article or blog post on this subtopic (8 words or fewer)."
     )
+    # Difficulty steering (Feature 9): an extra instruction appended only when
+    # requested. Omitted entirely (byte-identical prompt) when difficulty is
+    # None, so the default regeneration path is unchanged.
+    if difficulty == "simpler":
+        prompt += (
+            "\nDifficulty: write this for a complete beginner — plain, simple "
+            "language; short sentences; everyday analogies; explain any term "
+            "the moment it appears."
+        )
+    elif difficulty == "advanced":
+        prompt += (
+            "\nDifficulty: write this for an advanced learner — go deeper "
+            "technically, use precise domain terminology, and cover "
+            "edge cases, caveats, or nuances a beginner version would skip."
+        )
     module_schema = {
         "type": "OBJECT",
         "properties": {
@@ -472,3 +487,157 @@ async def generate_quiz(module_title: str, module_notes: str) -> dict:
     if not isinstance(parsed, dict) or not isinstance(parsed.get("questions"), list) or not parsed["questions"]:
         raise AIError("Incomplete quiz data returned by the model.")
     return parsed
+
+
+async def generate_flashcards(module_title: str, module_notes: str) -> dict:
+    """Flashcards for a lesson — same _call_gemini + _clean_json pattern as
+    the other generators (Feature 5)."""
+    prompt = (
+        f'Lesson title: "{module_title}"\n'
+        f'Lesson notes:\n{module_notes}\n\n'
+        "Create exactly 6 flashcards to help a learner memorize the key ideas "
+        "of this lesson. Each card has a short 'front' (a question or term, "
+        "12 words or fewer) and a concise 'back' answer (30 words or fewer)."
+    )
+    fc_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "cards": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "front": {"type": "STRING"},
+                        "back": {"type": "STRING"},
+                    },
+                    "required": ["front", "back"],
+                },
+            },
+        },
+        "required": ["cards"],
+    }
+
+    raw = await _call_gemini(prompt, schema=fc_schema, max_tokens=2000)
+    parsed = _clean_json(raw)
+
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("cards"), list) or not parsed["cards"]:
+        raise AIError("Incomplete flashcard data returned by the model.")
+
+    # Keep only well-formed cards so one malformed entry can never break the
+    # flip-card UI downstream.
+    cards = [
+        {"front": str(c.get("front", "")).strip(), "back": str(c.get("back", "")).strip()}
+        for c in parsed["cards"]
+        if isinstance(c, dict) and str(c.get("front", "")).strip() and str(c.get("back", "")).strip()
+    ]
+    if not cards:
+        raise AIError("No usable flashcards returned by the model.")
+    return {"cards": cards}
+
+
+async def answer_question(module_title: str, module_notes: str, question: str) -> str:
+    """Answer a learner's question in the context of a lesson's notes.
+    Stateless — nothing is stored (Feature 6)."""
+    prompt = (
+        f'Lesson title: "{module_title}"\n'
+        f'Lesson notes:\n{module_notes}\n\n'
+        f'A learner asks: "{question}"\n\n'
+        "Answer in at most 120 words of plain text, friendly and direct. Base "
+        "the answer on the lesson notes where possible; if the notes don't "
+        "cover it, say so briefly and answer from general knowledge."
+    )
+    answer_schema = {
+        "type": "OBJECT",
+        "properties": {"answer": {"type": "STRING"}},
+        "required": ["answer"],
+    }
+
+    raw = await _call_gemini(prompt, schema=answer_schema, max_tokens=800)
+    parsed = _clean_json(raw)
+
+    answer = parsed.get("answer") if isinstance(parsed, dict) else None
+    if not answer or not str(answer).strip():
+        raise AIError("No answer returned by the model.")
+    return str(answer).strip()
+
+
+async def generate_diagram(module_title: str, module_notes: str) -> dict:
+    """Ask Gemini for a Mermaid.js diagram for a lesson (Feature 10).
+
+    The model decides whether a diagram helps; an empty 'diagram' string
+    means "no diagram needed" and nothing is stored. Returns
+    {"diagram": str, "explanation": str}."""
+    prompt = (
+        f'Lesson title: "{module_title}"\n'
+        f'Lesson notes:\n{module_notes}\n\n'
+        "Decide whether a Mermaid.js diagram would genuinely help a learner "
+        "understand this lesson (a flow, cycle, hierarchy, relationship map, "
+        "timeline, or breakdown). If yes, return ONE diagram in the 'diagram' "
+        "field as pure Mermaid syntax — no code fences, no commentary — that "
+        "renders with mermaid.js v10 (flowchart TD, sequenceDiagram, "
+        "classDiagram, stateDiagram-v2, erDiagram, mindmap, timeline, or "
+        "pie). Keep node labels short (4 words or fewer), avoid special "
+        "characters that break Mermaid parsing, and keep it under 25 lines. "
+        "If a diagram would NOT genuinely help, return an empty string in "
+        "'diagram'. Put one short sentence describing the diagram (or why "
+        "none is needed) in 'explanation'."
+    )
+    diagram_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "diagram": {"type": "STRING"},
+            "explanation": {"type": "STRING"},
+        },
+        "required": ["diagram", "explanation"],
+    }
+
+    raw = await _call_gemini(prompt, schema=diagram_schema, max_tokens=1200)
+    try:
+        parsed = _clean_json(raw)
+    except AIError:
+        # Diagram text that itself contains ``` fences (models love wrapping
+        # mermaid in code fences even when told not to) trips _clean_json's
+        # own fence-stripping, which would swallow everything between the
+        # fences. Neutralize the backticks into JSON unicode escapes — they
+        # decode back to the exact same characters after parsing, but no
+        # longer look like fences to _clean_json.
+        neutralized = raw.replace("```", "\\u0060\\u0060\\u0060")
+        parsed = _clean_json(neutralized)
+
+    diagram = ""
+    explanation = ""
+    if isinstance(parsed, dict):
+        diagram = str(parsed.get("diagram") or "").strip()
+        explanation = str(parsed.get("explanation") or "").strip()
+        # Defensive: strip ```mermaid fences if the model added them anyway.
+        fence = re.search(r"```(?:mermaid)?\s*([\s\S]*?)```", diagram, re.IGNORECASE)
+        if fence:
+            diagram = fence.group(1).strip()
+
+    return {"diagram": diagram, "explanation": explanation}
+
+
+async def explain_like_im_five(module_title: str, module_notes: str) -> str:
+    """"Explain Like I'm 5" resummaries (Feature 11): returns a simpler
+    version of the notes without overwriting the stored ones."""
+    prompt = (
+        f'Lesson title: "{module_title}"\n'
+        f'Lesson notes:\n{module_notes}\n\n'
+        "Rewrite these lesson notes at a much simpler reading level, as if "
+        "explaining to a curious five-year-old: very short sentences, "
+        "everyday words only, and one simple analogy that makes the core idea "
+        "click. 90 words or fewer, in markdown with at most 3 bullet points."
+    )
+    eli5_schema = {
+        "type": "OBJECT",
+        "properties": {"summary": {"type": "STRING"}},
+        "required": ["summary"],
+    }
+
+    raw = await _call_gemini(prompt, schema=eli5_schema, max_tokens=800)
+    parsed = _clean_json(raw)
+
+    summary = parsed.get("summary") if isinstance(parsed, dict) else None
+    if not summary or not str(summary).strip():
+        raise AIError("No simplified summary returned by the model.")
+    return str(summary).strip()
