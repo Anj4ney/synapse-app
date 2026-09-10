@@ -286,7 +286,53 @@ def _clean_json(raw: str) -> dict:
                 except Exception as e2:
                     last_err = e2
 
+    # Last resort: the response was likely cut off mid-value (hit the token
+    # budget before the model finished writing the string / closing the
+    # braces). Rather than fail outright, try to repair it by closing the
+    # dangling string and any still-open braces, then reparse. This can
+    # recover a usable (if slightly truncated) value instead of erroring.
+    repaired = _attempt_truncation_repair(candidates[-1])
+    if repaired is not None:
+        try:
+            return json.loads(repaired)
+        except Exception:
+            pass
+
     raise AIError(f"Could not parse JSON response: {last_err}")
+
+
+def _attempt_truncation_repair(s: str) -> str | None:
+    """Best-effort repair of JSON that was truncated mid-stream (e.g. the
+    model hit its output token limit before finishing). Walks the text
+    tracking string/escape state and brace depth; if we're still inside an
+    open string and/or have unbalanced braces at the end, closes them."""
+    in_string = False
+    escaped = False
+    depth = 0
+    for ch in s:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        else:
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+
+    if not in_string and depth == 0:
+        return None  # nothing to repair; the failure was something else
+
+    out = s
+    if in_string:
+        out += '"'
+    out += "}" * max(depth, 0)
+    return out
 
 
 async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000) -> str:
@@ -300,6 +346,14 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
         "responseMimeType": "application/json",
         "maxOutputTokens": max_tokens,
         "temperature": 0.7,
+        # gemini-3.6-flash "thinks" by default, and that reasoning is billed
+        # against the same maxOutputTokens budget as the visible answer. For
+        # small budgets (diagram/ELI5/answer calls) thinking alone can eat
+        # the whole budget, cutting the model off mid-JSON-string before it
+        # ever writes the closing quote/brace - which is what surfaces here
+        # as "Unterminated string" / "Expecting ',' delimiter" parse errors.
+        # Turning thinking off gives the full budget to the actual output.
+        "thinkingConfig": {"thinkingBudget": 0},
     }
     if schema:
         gen_config["responseSchema"] = schema
@@ -591,7 +645,7 @@ async def generate_diagram(module_title: str, module_notes: str) -> dict:
         "required": ["diagram", "explanation"],
     }
 
-    raw = await _call_gemini(prompt, schema=diagram_schema, max_tokens=1200)
+    raw = await _call_gemini(prompt, schema=diagram_schema, max_tokens=2500)
     try:
         parsed = _clean_json(raw)
     except AIError:
