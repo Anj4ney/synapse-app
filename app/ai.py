@@ -346,14 +346,6 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
         "responseMimeType": "application/json",
         "maxOutputTokens": max_tokens,
         "temperature": 0.7,
-        # gemini-3.6-flash "thinks" by default, and that reasoning is billed
-        # against the same maxOutputTokens budget as the visible answer. For
-        # small budgets (diagram/ELI5/answer calls) thinking alone can eat
-        # the whole budget, cutting the model off mid-JSON-string before it
-        # ever writes the closing quote/brace - which is what surfaces here
-        # as "Unterminated string" / "Expecting ',' delimiter" parse errors.
-        # Turning thinking off gives the full budget to the actual output.
-        "thinkingConfig": {"thinkingBudget": 0},
     }
     if schema:
         gen_config["responseSchema"] = schema
@@ -630,8 +622,12 @@ async def generate_diagram(module_title: str, module_notes: str) -> dict:
         "field as pure Mermaid syntax — no code fences, no commentary — that "
         "renders with mermaid.js v10 (flowchart TD, sequenceDiagram, "
         "classDiagram, stateDiagram-v2, erDiagram, mindmap, timeline, or "
-        "pie). Keep node labels short (4 words or fewer), avoid special "
-        "characters that break Mermaid parsing, and keep it under 25 lines. "
+        "pie). Keep node labels short (4 words or fewer). Do not put double "
+        "quote characters anywhere in the diagram, including inside node "
+        "labels (write A[Fast adjective] not A[\"Fast adjective\"]) — this "
+        "diagram is embedded in a JSON string and a stray quote breaks it. "
+        "Avoid other special characters that break Mermaid parsing, and "
+        "keep it under 25 lines. "
         "If a diagram would NOT genuinely help, return an empty string in "
         "'diagram'. Put one short sentence describing the diagram (or why "
         "none is needed) in 'explanation'."
@@ -646,17 +642,34 @@ async def generate_diagram(module_title: str, module_notes: str) -> dict:
     }
 
     raw = await _call_gemini(prompt, schema=diagram_schema, max_tokens=2500)
+    parsed = None
     try:
         parsed = _clean_json(raw)
     except AIError:
-        # Diagram text that itself contains ``` fences (models love wrapping
-        # mermaid in code fences even when told not to) trips _clean_json's
-        # own fence-stripping, which would swallow everything between the
-        # fences. Neutralize the backticks into JSON unicode escapes — they
-        # decode back to the exact same characters after parsing, but no
-        # longer look like fences to _clean_json.
-        neutralized = raw.replace("```", "\\u0060\\u0060\\u0060")
-        parsed = _clean_json(neutralized)
+        try:
+            # Diagram text that itself contains ``` fences (models love
+            # wrapping mermaid in code fences even when told not to) trips
+            # _clean_json's own fence-stripping, which would swallow
+            # everything between the fences. Neutralize the backticks into
+            # JSON unicode escapes — they decode back to the exact same
+            # characters after parsing, but no longer look like fences to
+            # _clean_json.
+            neutralized = raw.replace("```", "\\u0060\\u0060\\u0060")
+            parsed = _clean_json(neutralized)
+        except AIError:
+            # Still not strict JSON — most likely the model left a literal,
+            # unescaped double-quote inside the diagram text (e.g. Mermaid
+            # label syntax like A["text"]), which prematurely ends the JSON
+            # string from a strict parser's point of view even though the
+            # response is otherwise complete. Since we know the exact shape
+            # of this response ({"diagram": ..., "explanation": ...}), fall
+            # back to pulling each field out positionally instead of
+            # requiring the whole blob to be valid JSON.
+            diagram_loose = _extract_json_string_field(raw, "diagram", "explanation")
+            explanation_loose = _extract_json_string_field(raw, "explanation", None)
+            if diagram_loose is None and explanation_loose is None:
+                raise
+            parsed = {"diagram": diagram_loose or "", "explanation": explanation_loose or ""}
 
     diagram = ""
     explanation = ""
@@ -669,6 +682,37 @@ async def generate_diagram(module_title: str, module_notes: str) -> dict:
             diagram = fence.group(1).strip()
 
     return {"diagram": diagram, "explanation": explanation}
+
+
+def _extract_json_string_field(raw: str, key: str, next_key: str | None) -> str | None:
+    """Loosely pull a string value for `key` out of a JSON-ish blob,
+    tolerating unescaped/unbalanced quotes *inside* the value — which trips
+    a strict JSON parser but is common when the value itself legitimately
+    contains quoted text (e.g. Mermaid node labels written as A["text"]).
+
+    Finds `"key": "`, then takes everything up to the boundary right before
+    `"next_key":` (or to the end of the blob if next_key is None / not
+    found), trimming a trailing dangling quote/brace/comma left over from
+    the outer JSON structure. Returns None if `key` isn't found at all."""
+    start_match = re.search(r'"' + re.escape(key) + r'"\s*:\s*"', raw)
+    if not start_match:
+        return None
+    start = start_match.end()
+
+    value = raw[start:]
+    if next_key:
+        end_match = re.search(r'"\s*,?\s*"' + re.escape(next_key) + r'"\s*:', value)
+        if end_match:
+            value = value[: end_match.start()]
+
+    value = re.sub(r'"?\s*\}*\s*$', "", value)
+    value = (
+        value.replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\\\", "\\")
+    )
+    return value.strip()
 
 
 async def explain_like_im_five(module_title: str, module_notes: str) -> str:
