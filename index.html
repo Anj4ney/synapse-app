@@ -4,10 +4,24 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Synapse — AI Learning Studio</title>
+<script>
+  // Early theme init (Feature 14): set data-theme before first paint to
+  // avoid a light->dark flash. Stored choice wins; otherwise follow the
+  // system preference; default light.
+  (function(){
+    try{
+      var t = localStorage.getItem('synapse_theme');
+      if(!t && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) t = 'dark';
+      document.documentElement.dataset.theme = (t === 'dark') ? 'dark' : 'light';
+    }catch(e){}
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 <style>
   :root{
     --ink:#1B2340;
@@ -253,6 +267,191 @@
   .quiz-explain{margin-top:10px;font-size:13px;color:var(--muted);line-height:1.5;}
   .quiz-score{font-weight:600;margin-bottom:14px;}
 
+  /* ===== Quiz attempt history ===== */
+  .quiz-history{margin-top:16px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:#FAFBFE;}
+  .quiz-history .qh-best{font-size:13.5px;font-weight:600;color:var(--ink);}
+  .qh-bars{display:flex;gap:5px;align-items:flex-end;margin-top:10px;height:34px;}
+  .qh-bar{width:14px;background:var(--line);border-radius:3px 3px 0 0;min-height:4px;}
+  .qh-bar.pass{background:var(--success);}
+  .qh-dates{display:flex;gap:5px;margin-top:4px;flex-wrap:wrap;}
+  .qh-date{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--muted);width:14px;text-align:center;overflow:hidden;white-space:nowrap;}
+  .qh-hint{font-size:11.5px;color:var(--muted);margin-top:8px;}
+
+  /* ===== Flashcards ===== */
+  .fc-block{margin-top:26px;padding-top:22px;border-top:1px solid var(--line);}
+  .fc-block .label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px;font-weight:600;}
+  .fc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;}
+  .fc-card{perspective:900px;cursor:pointer;}
+  .fc-inner{position:relative;width:100%;height:160px;transition:transform .5s cubic-bezier(.2,.7,.3,1);transform-style:preserve-3d;}
+  .fc-card.flipped .fc-inner{transform:rotateY(180deg);}
+  .fc-face{
+    position:absolute;inset:0;backface-visibility:hidden;-webkit-backface-visibility:hidden;
+    display:flex;align-items:center;justify-content:center;text-align:center;padding:18px;
+    border-radius:14px;border:1px solid var(--line);font-size:14.5px;line-height:1.5;
+  }
+  .fc-front{background:var(--paper-2);color:var(--ink);font-weight:600;}
+  .fc-back{background:#FBF3E6;color:#2B3358;transform:rotateY(180deg);}
+  .fc-face .fc-corner{position:absolute;bottom:8px;right:11px;font-size:10px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
+  .fc-actions{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+
+  /* ===== Ask about this lesson ===== */
+  .ask-block{margin-top:26px;padding-top:22px;border-top:1px solid var(--line);}
+  .ask-block .label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px;font-weight:600;}
+  .ask-form{display:flex;gap:10px;flex-wrap:wrap;}
+  .ask-form input{
+    flex:1;min-width:200px;padding:11px 14px;border:1px solid var(--line);border-radius:10px;
+    font-size:14px;background:var(--paper-2);color:var(--ink);
+  }
+  .ask-log{display:flex;flex-direction:column;gap:10px;margin-bottom:12px;}
+  .ask-msg{max-width:88%;padding:11px 14px;border-radius:12px;font-size:14px;line-height:1.55;}
+  .ask-msg.user{align-self:flex-end;background:var(--ink);color:#fff;border-bottom-right-radius:4px;}
+  .ask-msg.ai{align-self:flex-start;background:#F7F7FC;border:1px solid var(--line);border-bottom-left-radius:4px;}
+  .ask-msg.ai p{margin:0 0 8px;}
+  .ask-msg.ai p:last-child{margin-bottom:0;}
+  .ask-thinking{align-self:flex-start;color:var(--muted);font-size:13px;display:flex;align-items:center;gap:8px;}
+
+  /* ===== Personal notes ===== */
+  .mynotes-block{margin-top:26px;padding-top:22px;border-top:1px solid var(--line);}
+  .mynotes-block .label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:12px;font-weight:600;}
+  .mynotes-form{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;}
+  .mynotes-form textarea{
+    flex:1;min-width:220px;padding:11px 14px;border:1px solid var(--line);border-radius:10px;
+    font-size:14px;resize:vertical;min-height:64px;background:var(--paper-2);color:var(--ink);
+  }
+  .mynotes-list{display:flex;flex-direction:column;gap:10px;}
+  .mynote-item{padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#F7F7FC;}
+  .mynote-item p{margin:0;font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word;}
+  .mynote-meta{display:flex;align-items:center;justify-content:space-between;margin-top:8px;}
+  .mynote-meta .when{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--muted);}
+  .mynote-del{background:none;border:none;color:var(--muted);font-size:11.5px;padding:2px 4px;}
+  .mynote-del:hover{color:var(--danger);}
+
+  /* ===== Lesson tools (listen / ELI5 / diagram) ===== */
+  .notes-tools{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;}
+  .notes-tools .btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+
+  /* ===== Diagram ===== */
+  .diagram-block{margin-top:26px;}
+  .diagram-block .label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:8px;font-weight:600;}
+  .diagram-box{border:1px solid var(--line);border-radius:12px;padding:18px;background:var(--paper-2);overflow:auto;}
+  .diagram-box svg{max-width:100%;height:auto;display:block;}
+  .diagram-box .dm-caption{font-size:12px;color:var(--muted);margin-top:10px;}
+
+  /* ===== Public sharing ===== */
+  .share-panel{
+    display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 22px;
+    padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:#FAFBFE;
+  }
+  .share-panel input{
+    flex:1;min-width:220px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;
+    font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--muted);background:var(--paper-2);
+  }
+  .shared-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px;flex-wrap:wrap;}
+  .shared-badge{
+    font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--gold-2);border:1px solid var(--gold);border-radius:999px;padding:5px 12px;
+  }
+  .shared-module{background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:26px 30px;margin-bottom:16px;}
+  .shared-module h3{font-size:19px;margin-bottom:14px;display:flex;align-items:center;gap:10px;}
+  .shared-module .mod-num{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);}
+  .shared-title-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;}
+
+  /* ===== Leaderboard ===== */
+  .lb-row{
+    display:flex;align-items:center;gap:14px;padding:14px 18px;
+    border:1px solid var(--line);border-radius:12px;background:var(--paper-2);margin-bottom:10px;
+  }
+  .lb-row.me{border-color:var(--gold);background:linear-gradient(135deg,#FFFFFF 0%,#FBF3E6 100%);}
+  .lb-rank{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--muted);width:24px;}
+  .lb-name{flex:1;font-weight:600;font-size:15px;}
+  .lb-you{font-size:11px;color:var(--gold-2);font-weight:600;}
+  .lb-level{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#221607;background:var(--gold);border-radius:6px;padding:3px 7px;}
+  .lb-xp{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--muted);width:64px;text-align:right;}
+
+  /* ===== Dark mode (Feature 14) — variable overrides + targeted fixes for
+         the few rules that hardcode light colors. Light mode is untouched. ===== */
+  html[data-theme="dark"]{
+    --ink:#E8EBF8;
+    --ink-2:#B7BEE2;
+    --paper:#101528;
+    --paper-2:#1A2140;
+    --gold:#E8A33D;
+    --gold-2:#F2B65C;
+    --line:#2C3560;
+    --muted:#8E97C2;
+    --success:#4CC083;
+    --danger:#E0674C;
+    --shadow: 0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.35);
+  }
+  html[data-theme="dark"] .notes{color:#C6CDE9;}
+  html[data-theme="dark"] .module-item.active{background:#2A2340;}
+  html[data-theme="dark"] .quiz-q{background:#202848;}
+  html[data-theme="dark"] .quiz-q.correct{background:#173226;}
+  html[data-theme="dark"] .quiz-q.incorrect{background:#3A1F1B;}
+  html[data-theme="dark"] .quiz-history{background:#202848;}
+  html[data-theme="dark"] .blog-link-row{background:#202848;}
+  html[data-theme="dark"] .ask-msg.ai{background:#202848;}
+  html[data-theme="dark"] .ask-msg.user{background:var(--ink);color:#101528;}
+  html[data-theme="dark"] .mynote-item{background:#202848;}
+  html[data-theme="dark"] .fc-back{background:#3A2F16;color:#EFE6CC;}
+  html[data-theme="dark"] .field input{background:#141A31;color:var(--ink);border-color:var(--line);}
+  html[data-theme="dark"] .tabs{background:#141A31;}
+  html[data-theme="dark"] .form-error{background:#3A1F1B;border-color:#5A2F27;color:#F0A08E;}
+  html[data-theme="dark"] .edit-field input,
+  html[data-theme="dark"] .edit-field textarea,
+  html[data-theme="dark"] .edit-title-input,
+  html[data-theme="dark"] .edit-desc-input,
+  html[data-theme="dark"] .add-lesson-form input{background:#141A31;color:var(--ink);}
+  html[data-theme="dark"] .video-frame{background:#202848;}
+  html[data-theme="dark"] .badge-card.earned{background:linear-gradient(135deg,#1A2140 0%,#2A2340 100%);}
+  html[data-theme="dark"] .share-panel{background:#202848;}
+  html[data-theme="dark"] .share-panel input{background:var(--paper-2);color:var(--muted);}
+  html[data-theme="dark"] .lb-row.me{background:linear-gradient(135deg,#1A2140 0%,#2A2340 100%);}
+  html[data-theme="dark"] .ask-form input,
+  html[data-theme="dark"] .mynotes-form textarea{background:var(--paper-2);color:var(--ink);}
+  html[data-theme="dark"] .toast{background:#E8EBF8;color:#101528;}
+  /* The mind map SVG hardcodes light palette colors; inverting keeps it
+     readable in dark mode without touching its generator. */
+  html[data-theme="dark"] .mindmap-container svg{filter:invert(0.88) hue-rotate(180deg);}
+
+  /* ===== Engagement: header XP / level ===== */
+  .xp-chip{display:flex;align-items:center;gap:8px;}
+  .level-badge{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:#221607;
+    background:var(--gold);border-radius:6px;padding:3px 7px;white-space:nowrap;
+  }
+  .xp-bar{width:84px;height:6px;background:var(--line);border-radius:4px;overflow:hidden;}
+  .xp-bar-fill{height:100%;width:0%;background:var(--gold);transition:width .35s ease;}
+  .xp-text{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);white-space:nowrap;}
+  .streak-chip{
+    display:flex;align-items:center;gap:4px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;
+    color:var(--muted);white-space:nowrap;
+  }
+  .streak-chip .flame{font-size:14px;line-height:1;}
+  .streak-chip.warm{color:var(--gold-2);}
+  @media(max-width:860px){.xp-bar,.xp-text{display:none;}}
+
+  /* ===== Engagement: badges grid + toast ===== */
+  .badges-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:44px;}
+  .badge-card{
+    background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:16px 18px;
+    display:flex;gap:12px;align-items:flex-start;transition:transform .15s ease;
+  }
+  .badge-card:hover{transform:translateY(-2px);}
+  .badge-icon{font-size:26px;line-height:1;filter:grayscale(1);opacity:.45;}
+  .badge-card.earned{border-color:var(--gold);background:linear-gradient(135deg,#FFFFFF 0%,#FBF3E6 100%);}
+  .badge-card.earned .badge-icon{filter:none;opacity:1;}
+  .badge-name{font-weight:600;font-size:14px;color:var(--ink);}
+  .badge-desc{font-size:12.5px;color:var(--muted);line-height:1.45;margin-top:3px;}
+  .badge-lock{font-size:11px;color:var(--muted);margin-left:auto;flex-shrink:0;}
+  .toast-wrap{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:8px;max-width:320px;}
+  .toast{
+    background:var(--ink);color:#fff;border-radius:12px;padding:12px 16px;font-size:13.5px;line-height:1.45;
+    box-shadow:var(--shadow);display:flex;gap:10px;align-items:center;animation:toastIn .25s ease;
+  }
+  .toast .t-icon{font-size:18px;}
+  @keyframes toastIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+
   @media print{
     body *{visibility:hidden;}
     #print-area, #print-area *{visibility:visible;}
@@ -271,6 +470,16 @@
     <div class="brand"><span class="dot"></span>Synapse</div>
     <div class="topbar-right">
       <button class="link-btn" id="nav-dashboard">Dashboard</button>
+      <button class="link-btn" id="nav-leaderboard">Leaderboard</button>
+      <button class="link-btn" id="theme-toggle" title="Switch theme">🌙</button>
+      <div class="streak-chip" id="streak-chip" title="Daily learning streak">
+        <span class="flame">🔥</span><span id="streak-count">0</span>
+      </div>
+      <div class="xp-chip" id="xp-chip" title="Experience points">
+        <span class="level-badge" id="level-badge">L0</span>
+        <div class="xp-bar"><div class="xp-bar-fill" id="xp-bar-fill"></div></div>
+        <span class="xp-text" id="xp-text">0 XP</span>
+      </div>
       <div class="user-chip">
         <div class="avatar" id="avatar-init">?</div>
         <span id="user-name" class="mono" style="font-size:13px;color:var(--muted);"></span>
@@ -340,6 +549,12 @@
         <h4>No courses yet</h4>
         <p>Type a topic above and Synapse will put a full course together for you.</p>
       </div>
+
+      <div class="section-head">
+        <h3>Achievements</h3>
+        <span class="count-badge" id="badge-count">0 earned</span>
+      </div>
+      <div id="badges-grid" class="badges-grid"></div>
     </div>
   </section>
 
@@ -364,7 +579,9 @@
         <button class="btn btn-ghost btn-sm" id="show-mindmap">🧠 Mind map</button>
         <button class="btn btn-ghost btn-sm" id="export-md">Download notes (.md)</button>
         <button class="btn btn-ghost btn-sm" id="print-course">Print / Save PDF</button>
+        <button class="btn btn-ghost btn-sm" id="share-course" title="Create a public read-only link for this course">↗ Share</button>
       </div>
+      <div id="share-panel-wrap"></div>
       <div class="course-body">
         <nav class="module-rail" id="module-rail"></nav>
         <div class="module-main" id="module-main"></div>
@@ -385,7 +602,37 @@
     </div>
   </div>
 
+  <div id="toast-wrap" class="toast-wrap"></div>
+
 </div>
+
+<!-- LEADERBOARD VIEW (Feature 13) -->
+<section id="view-leaderboard" class="view hidden">
+  <div class="dash-wrap" style="max-width:720px;">
+    <button class="link-btn" id="back-to-dash-2" style="margin-bottom:18px;">← Back to dashboard</button>
+    <div class="section-head">
+      <h3>Leaderboard</h3>
+      <span class="count-badge">top 10 learners</span>
+    </div>
+    <div id="leaderboard-list"></div>
+  </div>
+</section>
+
+<!-- PUBLIC SHARED COURSE VIEW (Feature 12) -->
+<section id="view-shared" class="view hidden">
+  <div class="dash-wrap" style="max-width:860px;">
+    <div class="shared-head">
+      <div class="brand"><span class="dot"></span>Synapse</div>
+      <span class="shared-badge">Shared course · read-only</span>
+    </div>
+    <div class="shared-title-row">
+      <h2 id="shared-title" style="font-size:30px;line-height:1.25;"></h2>
+    </div>
+    <p id="shared-desc" style="color:var(--muted);line-height:1.55;margin:8px 0 26px;"></p>
+    <div id="shared-modules"></div>
+    <p class="footer-note">Notes are AI-generated — double-check anything important before you rely on it. Shared via <a href="/">Synapse</a>.</p>
+  </div>
+</section>
 
 <script>
 /* ---------------- API helper ---------------- */
@@ -425,15 +672,29 @@ let authMode = 'signin';
 let courseEditing = false;
 let moduleEditing = false;
 let addingLesson = false;
+let meStats = { xp:0, level:0, streak_count:0, badges:[] };   // engagement stats from /api/auth/me
+
+/* Badge catalog — mirrors app/achievements.py. Unknown/missing data simply
+   renders as locked, so partial data never breaks the UI. */
+const BADGE_CATALOG = [
+  { id:'first_lesson',           icon:'🥾', name:'First Steps',      desc:'Complete your first lesson.' },
+  { id:'first_course_completed', icon:'🏆', name:'Course Conqueror', desc:'Complete every lesson in a course.' },
+  { id:'first_quiz',             icon:'❓', name:'Quiz Rookie',      desc:'Finish your first quiz attempt.' },
+  { id:'five_quizzes_passed',    icon:'🎯', name:'Quiz Master',      desc:'Pass five quizzes (score at least two-thirds).' },
+  { id:'seven_day_streak',       icon:'🔥', name:'On Fire',          desc:'Keep a seven-day learning streak.' },
+  { id:'xp_500',                 icon:'⭐', name:'Scholar',           desc:'Earn 500 XP.' },
+  { id:'flashcard_fan',          icon:'🃏', name:'Flashcard Fan',    desc:'Generate flashcards for a lesson.' },
+  { id:'note_taker',             icon:'📝', name:'Note Taker',        desc:'Write your first personal lesson note.' },
+];
 
 const el = (id) => document.getElementById(id);
 
 /* ---------------- View switching ---------------- */
 function showView(name){
-  ['auth','dashboard','course'].forEach(v=>{
+  ['auth','dashboard','course','leaderboard','shared'].forEach(v=>{
     el('view-'+v).classList.toggle('hidden', v!==name);
   });
-  el('topbar').classList.toggle('hidden', name==='auth');
+  el('topbar').classList.toggle('hidden', name==='auth' || name==='shared');
 }
 
 /* ---------------- Constellation loader ---------------- */
@@ -504,9 +765,156 @@ async function enterApp(){
   el('user-name').textContent = currentUser;
   el('avatar-init').textContent = currentUser.slice(0,1).toUpperCase();
   el('topbar').classList.remove('hidden');
+  refreshMe();          // engagement: header XP bar / streak / badges
+  renderBadges();       // immediate locked-state render; refreshMe updates it
   await loadCourses();
   renderCourseGrid();
   showView('dashboard');
+}
+
+/* ---------------- Theme toggle (Feature 14) ---------------- */
+const THEME_KEY = 'synapse_theme';
+
+function currentTheme(){
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function applyThemeButton(){
+  const btn = el('theme-toggle');
+  if(!btn) return;
+  btn.textContent = currentTheme() === 'dark' ? '☀️' : '🌙';
+  btn.title = currentTheme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+function toggleTheme(){
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try{ localStorage.setItem(THEME_KEY, next); }catch(e){ /* private mode */ }
+  applyThemeButton();
+  // Re-render a visible diagram so Mermaid picks up the new theme.
+  const c = currentCourse();
+  if(c && c.modules && c.modules[activeModuleIndex]){
+    renderDiagram(c.modules[activeModuleIndex]);
+  }
+}
+
+el('theme-toggle').addEventListener('click', toggleTheme);
+applyThemeButton();
+
+/* ---------------- Completion micro-animations (Feature 15) ---------------- */
+const CONFETTI_COLORS = ['#E8A33D', '#F2B65C', '#3FA66B', '#FFFFFF'];
+
+function motionAllowed(){
+  try{ return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch(e){ return true; }
+}
+
+function lessonConfetti(){
+  if(typeof confetti !== 'function' || !motionAllowed()) return;   // CDN failed or user prefers no motion
+  try{
+    confetti({
+      particleCount: 70,
+      spread: 70,
+      origin: { y: 0.7 },
+      colors: CONFETTI_COLORS,
+      disableForReducedMotion: true,
+    });
+  }catch(e){ /* cosmetic only */ }
+}
+
+function courseCompleteConfetti(){
+  if(typeof confetti !== 'function' || !motionAllowed()) return;
+  try{
+    const end = Date.now() + 1200;
+    (function frame(){
+      confetti({ particleCount: 4, angle: 60,  spread: 60, origin: { x: 0, y: 0.7 }, colors: CONFETTI_COLORS, disableForReducedMotion: true });
+      confetti({ particleCount: 4, angle: 120, spread: 60, origin: { x: 1, y: 0.7 }, colors: CONFETTI_COLORS, disableForReducedMotion: true });
+      if(Date.now() < end) requestAnimationFrame(frame);
+    })();
+  }catch(e){ /* cosmetic only */ }
+}
+
+function celebrateCompletion(course){
+  if(!course || !Array.isArray(course.modules)) return;
+  const allDone = course.modules.length > 0 && course.modules.every(m=>m.completed);
+  if(allDone){
+    courseCompleteConfetti();
+    toast('🎉', 'Course complete — every lesson done!');
+  } else {
+    lessonConfetti();
+  }
+}
+
+/* ---------------- Engagement stats (XP / level / streak / badges) ---------------- */
+function updateHeaderStats(){
+  const xp = meStats.xp || 0;
+  const lvl = meStats.level || 0;
+  const streak = meStats.streak_count || 0;
+  el('level-badge').textContent = 'L' + lvl;
+  el('xp-bar-fill').style.width = (xp % 100) + '%';
+  el('xp-text').textContent = xp + ' XP';
+  el('streak-count').textContent = streak;
+  el('streak-chip').classList.toggle('warm', streak > 0);
+}
+
+/* Toast — small non-blocking notification (badge earned, link copied, …) */
+function toast(icon, text, ms=3600){
+  try{
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.innerHTML = `<span class="t-icon">${icon}</span><span>${escapeHTML(text)}</span>`;
+    el('toast-wrap').appendChild(t);
+    setTimeout(()=>{ t.style.transition='opacity .3s ease'; t.style.opacity='0'; setTimeout(()=>t.remove(), 320); }, ms);
+  }catch(e){ /* cosmetic only */ }
+}
+
+function renderBadges(){
+  const grid = el('badges-grid');
+  if(!grid) return;
+  const earned = new Set(meStats.badges || []);
+  el('badge-count').textContent = earned.size + ' of ' + BADGE_CATALOG.length + ' earned';
+  grid.innerHTML = '';
+  BADGE_CATALOG.forEach(b=>{
+    const has = earned.has(b.id);
+    const card = document.createElement('div');
+    card.className = 'badge-card' + (has ? ' earned' : '');
+    card.title = has ? 'Earned' : 'Locked — ' + b.desc;
+    card.innerHTML = `
+      <span class="badge-icon">${b.icon}</span>
+      <div style="flex:1;">
+        <div class="badge-name">${escapeHTML(b.name)}</div>
+        <div class="badge-desc">${escapeHTML(b.desc)}</div>
+      </div>
+      ${has ? '' : '<span class="badge-lock">🔒</span>'}
+    `;
+    grid.appendChild(card);
+  });
+}
+
+/* Apply fresh stats from the server; announce newly earned badges via toast. */
+function applyMeStats(next){
+  const prevBadges = new Set(meStats.badges || []);
+  meStats = {
+    xp: next.xp || 0,
+    level: next.level || 0,
+    streak_count: next.streak_count != null ? next.streak_count : (meStats.streak_count || 0),
+    badges: Array.isArray(next.badges) ? next.badges : (meStats.badges || []),
+  };
+  updateHeaderStats();
+  renderBadges();
+  (meStats.badges || []).forEach(id=>{
+    if(!prevBadges.has(id)){
+      const meta = BADGE_CATALOG.find(b=>b.id===id);
+      if(meta) toast(meta.icon, `Badge earned: ${meta.name}!`);
+    }
+  });
+}
+
+async function refreshMe(){
+  try{
+    const me = await api('/auth/me');
+    applyMeStats(me);
+  }catch(e){ /* header stats are optional chrome — never break the app */ }
 }
 
 async function loadCourses(){
@@ -517,8 +925,40 @@ async function loadCourses(){
   }
 }
 
-el('nav-dashboard').addEventListener('click', async ()=>{ await loadCourses(); renderCourseGrid(); showView('dashboard'); });
-el('back-to-dash').addEventListener('click', async ()=>{ await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+el('nav-dashboard').addEventListener('click', async ()=>{ refreshMe(); await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+el('back-to-dash').addEventListener('click', async ()=>{ refreshMe(); await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+
+/* ---------------- Leaderboard (Feature 13) ---------------- */
+el('nav-leaderboard').addEventListener('click', openLeaderboard);
+el('back-to-dash-2').addEventListener('click', async ()=>{ refreshMe(); await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+
+async function openLeaderboard(){
+  showView('leaderboard');
+  const holder = el('leaderboard-list');
+  holder.innerHTML = `<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Loading leaderboard…</div>`;
+  try{
+    const rows = await api('/leaderboard', { auth:false });
+    if(!rows.length){
+      holder.innerHTML = `<div class="empty-state"><h4>No learners yet</h4><p>Complete lessons and pass quizzes to earn XP.</p></div>`;
+      return;
+    }
+    holder.innerHTML = '';
+    rows.forEach((u,i)=>{
+      const isMe = currentUser && u.username === currentUser;
+      const row = document.createElement('div');
+      row.className = 'lb-row' + (isMe ? ' me' : '');
+      row.innerHTML = `
+        <span class="lb-rank">${String(i+1).padStart(2,'0')}</span>
+        <div class="avatar" style="${isMe ? '' : 'background:var(--muted);'}">${escapeHTML(u.username.slice(0,1).toUpperCase())}</div>
+        <span class="lb-name">${escapeHTML(u.username)}${isMe ? ' <span class="lb-you">(you)</span>' : ''}</span>
+        <span class="lb-level">L${u.level}</span>
+        <span class="lb-xp">${u.xp} XP</span>`;
+      holder.appendChild(row);
+    });
+  }catch(err){
+    holder.innerHTML = `<div class="form-error">Could not load the leaderboard: ${escapeHTML(err.message)}</div>`;
+  }
+}
 
 /* ---------------- Dashboard rendering ---------------- */
 function renderCourseGrid(){
@@ -724,9 +1164,69 @@ async function addLesson(course){
 }
 
 /* ---- Module main ---- */
+/* ---- Read-aloud (Feature 8, frontend-only) ---- */
+let lessonSpeaking = false;
+
+function notesToSpeech(text){
+  // Strip the markdown sugar so the voice reads prose, not symbols.
+  return (text || '')
+    .replace(/^#{1,6}\s+/gm, '')          // heading hashes
+    .replace(/\*\*/g, '')                 // bold
+    .replace(/\*/g, '')                   // italic
+    .replace(/`{1,3}/g, '')               // code fences / inline code
+    .replace(/^\s*[-*+]\s+/gm, '')       // bullet markers
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')  // links -> link text
+    .replace(/\s*\n\s*/g, ' ')           // newlines -> pause-ish space
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function setupListenButton(module){
+  const btn = el('listen-btn');
+  if(!btn) return;
+  if(!('speechSynthesis' in window)){
+    btn.disabled = true;
+    btn.title = "Your browser doesn't support speech synthesis.";
+    return;
+  }
+  btn.addEventListener('click', ()=>{
+    if(lessonSpeaking){
+      window.speechSynthesis.cancel();
+      return;
+    }
+    const plain = notesToSpeech(module.notes);
+    if(!plain){ return; }
+    const utter = new SpeechSynthesisUtterance(plain);
+    utter.rate = 1;
+    const done = ()=>{
+      lessonSpeaking = false;
+      btn.innerHTML = '🔊 Listen';
+      btn.classList.remove('active');
+    };
+    utter.onend = done;
+    utter.onerror = done;
+    window.speechSynthesis.cancel();   // clear anything queued
+    window.speechSynthesis.speak(utter);
+    lessonSpeaking = true;
+    btn.innerHTML = '■ Stop';
+    btn.classList.add('active');
+  });
+}
+
+function stopLessonSpeech(){
+  try{
+    if('speechSynthesis' in window && lessonSpeaking){
+      window.speechSynthesis.cancel();
+      lessonSpeaking = false;
+    }
+  }catch(e){ /* cosmetic */ }
+}
+
 function renderModuleMain(course){
   const module = course.modules[activeModuleIndex];
   const main = el('module-main');
+  stopLessonSpeech();   // switching lessons stops any ongoing read-aloud
+  eli5Active = false;   // every lesson render starts from the original notes
 
   if(moduleEditing){
     main.innerHTML = `
@@ -762,6 +1262,7 @@ function renderModuleMain(course){
             blogQuery: el('edit-mod-blog').value.trim()
           }
         });
+        eli5CacheClear();   // notes were just edited — cached simplifications are stale
         moduleEditing = false;
         renderCourseView();
       }catch(err){ alert('Could not save changes: ' + err.message); }
@@ -790,13 +1291,24 @@ function renderModuleMain(course){
   main.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
       <h3 style="flex:1;">${escapeHTML(module.title)}</h3>
-      <div style="display:flex;gap:8px;flex-shrink:0;">
+      <div style="display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;">
         <button class="btn btn-ghost btn-sm" id="edit-mod-btn">Edit</button>
         <button class="btn btn-ghost btn-sm" id="regen-mod-btn">Regenerate</button>
+        <button class="btn btn-ghost btn-sm" id="regen-simpler" title="Rewrite this lesson at a simpler level">− Simpler</button>
+        <button class="btn btn-ghost btn-sm" id="regen-advanced" title="Rewrite this lesson at a more advanced level">+ More advanced</button>
       </div>
     </div>
     <div id="regen-status" class="gen-status hidden" style="color:var(--muted);margin-bottom:10px;"><span class="spinner-dot"></span> Rewriting this lesson…</div>
-    <div class="notes">${notesHtml}</div>
+    <div class="notes-tools">
+      <button class="btn btn-ghost btn-sm" id="listen-btn" title="Read this lesson's notes aloud">🔊 Listen</button>
+      <button class="btn btn-ghost btn-sm" id="diagram-btn" title="Generate a Mermaid diagram for this lesson">🧩 Diagram</button>
+      <button class="btn btn-ghost btn-sm" id="eli5-btn" title="Explain this lesson like I'm five">🍼 ELI5</button>
+    </div>
+    <div class="notes" id="notes-display">${notesHtml}</div>
+    <div class="diagram-block hidden" id="diagram-block">
+      <div class="label">Diagram</div>
+      <div class="diagram-box" id="diagram-container"></div>
+    </div>
     <div class="video-block">
       <div class="label">Related video</div>
       <div class="video-frame">
@@ -811,6 +1323,27 @@ function renderModuleMain(course){
     <div class="quiz-block" id="quiz-block">
       <div class="label">Check your understanding</div>
       <div id="quiz-container"></div>
+      <div id="quiz-history"></div>
+    </div>
+    <div class="fc-block" id="fc-block">
+      <div class="label">Flashcards</div>
+      <div id="fc-container"></div>
+    </div>
+    <div class="ask-block" id="ask-block">
+      <div class="label">Ask about this lesson</div>
+      <div id="ask-log" class="ask-log"></div>
+      <form id="ask-form" class="ask-form">
+        <input id="ask-input" placeholder="Ask anything about this lesson…" maxlength="500" />
+        <button class="btn btn-primary btn-sm" id="ask-send" type="submit">Ask</button>
+      </form>
+    </div>
+    <div class="mynotes-block" id="mynotes-block">
+      <div class="label">My notes</div>
+      <div id="mynotes-list" class="mynotes-list"></div>
+      <div class="mynotes-form" style="margin-top:12px;">
+        <textarea id="mynote-input" rows="2" maxlength="2000" placeholder="Jot down your own thoughts on this lesson…"></textarea>
+        <button class="btn btn-primary btn-sm" id="add-mynote" style="align-self:flex-end;">Add note</button>
+      </div>
     </div>
     <div class="module-actions">
       <button class="btn btn-ghost btn-sm" id="prev-mod" ${activeModuleIndex===0 ? 'disabled':''}>← Previous</button>
@@ -822,22 +1355,37 @@ function renderModuleMain(course){
   el('next-mod').addEventListener('click', ()=>{ activeModuleIndex++; renderCourseView(); });
   el('toggle-complete').addEventListener('click', async ()=>{
     try{
+      const targetState = !module.completed;
       activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/complete`, {
-        method:'PATCH', body:{ completed: !module.completed }
+        method:'PATCH', body:{ completed: targetState }
       });
       renderCourseView();
+      refreshMe();   // XP was awarded server-side — update the header bar
+      if(targetState){ celebrateCompletion(activeCourse); }   // Feature 15
     }catch(err){ alert('Could not update completion: ' + err.message); }
   });
   el('edit-mod-btn').addEventListener('click', ()=>{ moduleEditing=true; renderCourseView(); });
   el('regen-mod-btn').addEventListener('click', ()=>regenerateModule(course));
+  el('regen-simpler').addEventListener('click', ()=>regenerateModule(course, 'simpler'));
+  el('regen-advanced').addEventListener('click', ()=>regenerateModule(course, 'advanced'));
 
   renderQuiz(course, module);
+  renderFlashcards(course, module);
+  renderAsk(course, module);
+  renderLessonNotes(course);
+  setupListenButton(module);
+  setupDiagramButton(course, module);
+  renderDiagram(module);
+  setupEli5Button(course, module);
 }
 
-async function regenerateModule(course){
+async function regenerateModule(course, difficulty){
   el('regen-status').classList.remove('hidden');
   try{
-    activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/regenerate`, { method:'POST' });
+    activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/regenerate`, {
+      method:'POST', body: difficulty ? { difficulty } : null
+    });
+    eli5CacheClear();   // notes changed — cached simplifications are stale
     renderCourseView();
   }catch(err){
     el('regen-status').classList.add('hidden');
@@ -848,6 +1396,7 @@ async function regenerateModule(course){
 /* ---- Quiz ---- */
 function renderQuiz(course, module){
   const container = el('quiz-container');
+  renderQuizHistory(module);
   if(module.quiz){
     renderQuizQuestions(course, module, container);
     return;
@@ -871,8 +1420,39 @@ function renderQuiz(course, module){
   });
 }
 
+/* ---- Quiz attempt history (Feature 4) ---- */
+function renderQuizHistory(module){
+  const holder = el('quiz-history');
+  if(!holder) return;
+  const attempts = (module && module.quiz_attempts) || [];
+  if(!attempts.length){ holder.innerHTML = ''; return; }   // no data -> no UI
+  const best = attempts.reduce((b,a)=>{
+    const ra = (a.total||0) > 0 ? (a.score||0)/a.total : 0;
+    const rb = (b.total||0) > 0 ? (b.score||0)/b.total : 0;
+    return ra >= rb ? a : b;
+  });
+  const bars = attempts.slice(-12).map(a=>{
+    const ratio = (a.total||0) > 0 ? (a.score||0)/a.total : 0;
+    const passed = (a.score||0)*3 >= (a.total||0)*2;
+    const d = a.date ? new Date(a.date) : null;
+    const label = d && !isNaN(d) ? d.toLocaleDateString(undefined,{month:'short',day:'numeric'}) : '';
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+      <div class="qh-bar${passed ? ' pass' : ''}" style="height:${Math.max(4, Math.round(ratio*30))}px;" title="${(a.score??'?')}/${(a.total??'?')}${label ? ' · ' + label : ''}"></div>
+      <span class="qh-date">${escapeHTML(label || ('' + (a.score??'?') + '/' + (a.total??'?')))}</span>
+    </div>`;
+  }).join('');
+  holder.innerHTML = `
+    <div class="quiz-history">
+      <span class="qh-best">Best: ${best.score ?? '?'}/${best.total ?? '?'}</span>
+      <span class="qh-hint" style="margin-left:8px;">${attempts.length} attempt${attempts.length===1 ? '' : 's'} · green = passed</span>
+      <div class="qh-bars">${bars}</div>
+    </div>
+  `;
+}
+
 function renderQuizQuestions(course, module, container){
   const quiz = module.quiz;
+  let quizSubmitted = false;   // engagement: report the attempt once, when every question is answered
   let html = `<div class="quiz-score" id="quiz-score-line"></div>`;
   quiz.questions.forEach((q,qi)=>{
     html += `<div class="quiz-q" id="quiz-q-${qi}">
@@ -912,6 +1492,11 @@ function renderQuizQuestions(course, module, container){
       explainDiv.textContent = (isCorrect ? 'Correct. ' : 'Not quite. ') + (q.explanation||'');
       explainDiv.classList.remove('hidden');
       updateScore();
+      const allAnswered = quiz.questions.every((qq,qi2)=>document.querySelector(`input[name="quiz-${qi2}"]:checked`));
+      if(!quizSubmitted && allAnswered){
+        quizSubmitted = true;
+        submitQuizAttempt(course, quiz);
+      }
     });
   });
 
@@ -925,6 +1510,342 @@ function renderQuizQuestions(course, module, container){
       container.innerHTML = `<div class="form-error">Could not generate new questions: ${escapeHTML(err.message)}</div>`;
     }
   });
+}
+
+/* ---- Engagement: report a finished quiz to the server (XP award) ---- */
+async function submitQuizAttempt(course, quiz){
+  try{
+    const selections = quiz.questions.map((q,qi)=>{
+      const r = document.querySelector(`input[name="quiz-${qi}"]:checked`);
+      return r ? r.value : null;
+    });
+    const score = quiz.questions.filter((q,qi)=>selections[qi]===q.correctId).length;
+    const resp = await api(`/courses/${course.id}/modules/${activeModuleIndex}/quiz/submit`, {
+      method:'POST', body:{ score, total: quiz.questions.length }
+    });
+    meStats = applyMeStatsSafe(resp);
+    // The response carries the authoritative course state, including the
+    // newly recorded attempt — refresh the history block from it.
+    if(resp.course) activeCourse = resp.course;
+    if(activeCourse && activeCourse.modules[activeModuleIndex]){
+      renderQuizHistory(activeCourse.modules[activeModuleIndex]);
+    }
+  }catch(e){ /* engagement is best-effort — never break the quiz UI */ }
+}
+
+/* ---- Flashcards (Feature 5) ---- */
+function renderFlashcards(course, module){
+  const c = el('fc-container');
+  if(!c) return;
+  const cards = (module && module.flashcards) || [];
+
+  if(!cards.length){
+    c.innerHTML = `
+      <button class="btn btn-ghost btn-sm" id="gen-fc-btn">🃏 Generate flashcards</button>
+      <div id="fc-status" class="gen-status hidden" style="color:var(--muted);margin-top:10px;"><span class="spinner-dot"></span> Writing flashcards…</div>
+      <div id="fc-error" class="form-error hidden"></div>`;
+    el('gen-fc-btn').addEventListener('click', async ()=>{
+      el('fc-status').classList.remove('hidden');
+      el('fc-error').classList.add('hidden');
+      el('gen-fc-btn').disabled = true;
+      try{
+        activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/flashcards`, { method:'POST' });
+        renderCourseView();
+        refreshMe();   // flashcard_fan badge may have been earned
+      }catch(err){
+        el('fc-status').classList.add('hidden');
+        el('fc-error').textContent = 'Could not generate flashcards: ' + err.message;
+        el('fc-error').classList.remove('hidden');
+        el('gen-fc-btn').disabled = false;
+      }
+    });
+    return;
+  }
+
+  const cardHtml = cards.map((card,i)=>`
+    <div class="fc-card" data-fc="${i}" title="Click to flip">
+      <div class="fc-inner">
+        <div class="fc-face fc-front">${escapeHTML(card.front || '')}<span class="fc-corner">front</span></div>
+        <div class="fc-face fc-back">${escapeHTML(card.back || '')}<span class="fc-corner">back</span></div>
+      </div>
+    </div>`).join('');
+  c.innerHTML = `<div class="fc-actions">
+      <button class="btn btn-ghost btn-sm" id="fc-shuffle">🔀 Shuffle</button>
+      <button class="btn btn-ghost btn-sm" id="fc-new">✎ New cards</button>
+    </div>
+    <div class="fc-grid" id="fc-grid">${cardHtml}</div>
+    <p class="qh-hint">Click a card to flip it.</p>`;
+
+  c.querySelectorAll('.fc-card').forEach(card=>{
+    card.addEventListener('click', ()=>card.classList.toggle('flipped'));
+  });
+  el('fc-shuffle').addEventListener('click', ()=>{
+    const grid = el('fc-grid');
+    [...grid.children].sort(()=>Math.random()-0.5).forEach(ch=>grid.appendChild(ch));
+  });
+  el('fc-new').addEventListener('click', async ()=>{
+    el('fc-new').disabled = true;
+    try{
+      activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/flashcards`, { method:'POST' });
+      renderCourseView();
+    }catch(err){ alert('Could not generate new flashcards: ' + err.message); }
+    el('fc-new').disabled = false;
+  });
+}
+
+/* ---- Ask about this lesson (Feature 6) ---- */
+function renderAsk(course, module){
+  const log = el('ask-log');
+  const form = el('ask-form');
+  const input = el('ask-input');
+  const send = el('ask-send');
+  if(!log || !form) return;
+  log.innerHTML = '';   // stateless chat: fresh per lesson render
+  const busyDot = () => `<div class="ask-thinking" id="ask-thinking"><span class="spinner-dot"></span> Thinking…</div>`;
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const q = (input.value || '').trim();
+    if(!q || send.disabled) return;
+    input.value = '';
+    send.disabled = true;
+    log.insertAdjacentHTML('beforeend', `<div class="ask-msg user">${escapeHTML(q)}</div>`);
+    log.insertAdjacentHTML('beforeend', busyDot());
+    log.scrollTop = log.scrollHeight;   // keeps newest in view if log grows
+    try{
+      const resp = await api(`/courses/${course.id}/modules/${activeModuleIndex}/ask`, {
+        method:'POST', body:{ question: q }
+      });
+      const holder = document.createElement('div');
+      holder.className = 'ask-msg ai';
+      const answerHtml = (typeof marked !== 'undefined') ? marked.parse(resp.answer || '') : escapeHTML(resp.answer || '');
+      holder.innerHTML = answerHtml;
+      const t = el('ask-thinking'); if(t) t.remove();
+      log.appendChild(holder);
+    }catch(err){
+      const t = el('ask-thinking'); if(t) t.remove();
+      log.insertAdjacentHTML('beforeend', `<div class="ask-msg ai" style="border-color:var(--danger);color:var(--danger);">${escapeHTML(err.message || 'Something went wrong.')}</div>`);
+    }
+    send.disabled = false;
+    input.focus();
+  });
+}
+
+/* ---- Personal notes (Feature 7) ---- */
+async function refreshLessonNotes(course){
+  const list = el('mynotes-list');
+  if(!list || !course) return;
+  let notes = [];
+  try{
+    notes = await api(`/courses/${course.id}/modules/${activeModuleIndex}/notes`);
+  }catch(e){ notes = []; }   // notes are optional chrome — degrade silently
+  if(!notes.length){
+    list.innerHTML = `<p class="qh-hint" style="margin:0;">No personal notes on this lesson yet.</p>`;
+    return;
+  }
+  list.innerHTML = '';
+  notes.forEach(n=>{
+    const d = n.created_at ? new Date(n.created_at) : null;
+    const when = d && !isNaN(d) ? d.toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'}) : '';
+    const item = document.createElement('div');
+    item.className = 'mynote-item';
+    item.innerHTML = `<p>${escapeHTML(n.text || '')}</p>
+      <div class="mynote-meta">
+        <span class="when">${escapeHTML(when)}</span>
+        <button class="mynote-del" data-note="${n.id}">Delete</button>
+      </div>`;
+    list.appendChild(item);
+  });
+  list.querySelectorAll('[data-note]').forEach(b=>b.addEventListener('click', async ()=>{
+    try{
+      await api('/notes/' + b.dataset.note, { method:'DELETE' });
+      await refreshLessonNotes(course);
+    }catch(err){ alert('Could not delete that note: ' + err.message); }
+  }));
+}
+
+function renderLessonNotes(course){
+  const addBtn = el('add-mynote');
+  const input = el('mynote-input');
+  if(!addBtn || !input) return;
+  addBtn.addEventListener('click', async ()=>{
+    const text = (input.value || '').trim();
+    if(!text) return;
+    addBtn.disabled = true;
+    try{
+      await api(`/courses/${course.id}/modules/${activeModuleIndex}/notes`, {
+        method:'POST', body:{ text }
+      });
+      input.value = '';
+      await refreshLessonNotes(course);
+      refreshMe();   // note_taker badge may have been earned
+    }catch(err){ alert('Could not save that note: ' + err.message); }
+    addBtn.disabled = false;
+  });
+  refreshLessonNotes(course);
+}
+
+/* ---- "Explain Like I'm 5" (Feature 11) ---- */
+let eli5Active = false;        // false = original notes shown
+const eli5Cache = {};          // "courseId:moduleIndex" -> simplified text (client-only)
+
+function eli5CacheClear(){ for(const k of Object.keys(eli5Cache)) delete eli5Cache[k]; }
+
+function renderMarkdown(text){
+  return (typeof marked !== 'undefined') ? marked.parse(text || '') : (text || '');
+}
+
+function setupEli5Button(course, module){
+  const btn = el('eli5-btn');
+  if(!btn) return;
+  btn.textContent = eli5Active ? '📖 Original' : '🍼 ELI5';
+  btn.classList.toggle('active', eli5Active);
+  btn.addEventListener('click', ()=>toggleEli5(course, module, btn));
+}
+
+async function toggleEli5(course, module, btn){
+  const display = el('notes-display');
+  if(!display) return;
+
+  if(eli5Active){   // back to the stored notes — nothing is fetched or changed
+    eli5Active = false;
+    display.innerHTML = renderMarkdown(module.notes || '');
+    btn.textContent = '🍼 ELI5';
+    btn.classList.remove('active');
+    return;
+  }
+
+  const key = course.id + ':' + activeModuleIndex;
+  btn.disabled = true;
+  btn.textContent = '🍼 Simplifying…';
+  try{
+    let simple = eli5Cache[key];
+    if(!simple){
+      const resp = await api(`/courses/${course.id}/modules/${activeModuleIndex}/eli5`, { method:'POST' });
+      simple = resp.notes || '';
+      eli5Cache[key] = simple;
+    }
+    eli5Active = true;
+    display.innerHTML = renderMarkdown(simple);
+    btn.textContent = '📖 Original';
+    btn.classList.add('active');
+  }catch(err){
+    btn.textContent = '🍼 ELI5';
+    alert('Could not simplify this lesson: ' + err.message);
+  }
+  btn.disabled = false;
+}
+
+/* ---- Auto-generated diagrams (Feature 10) ---- */
+function setupDiagramButton(course, module){
+  const btn = el('diagram-btn');
+  if(!btn) return;
+  if(module.diagram){ btn.textContent = '🧩 Redraw diagram'; }
+  btn.addEventListener('click', async ()=>{
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.textContent = '🧩 Drawing…';
+    try{
+      activeCourse = await api(`/courses/${course.id}/modules/${activeModuleIndex}/diagram`, { method:'POST' });
+      const fresh = activeCourse.modules[activeModuleIndex];
+      renderDiagram(fresh);
+      btn.textContent = fresh.diagram ? '🧩 Redraw diagram' : oldLabel;
+      if(!fresh.diagram){ toast('🧩', 'The model decided a diagram would not add much for this lesson.'); }
+    }catch(err){
+      btn.textContent = oldLabel;
+      alert('Could not generate a diagram: ' + err.message);
+    }
+    btn.disabled = false;
+  });
+}
+
+async function renderDiagram(module){
+  const block = el('diagram-block');
+  const container = el('diagram-container');
+  if(!block || !container) return;
+  const code = module && module.diagram;
+  if(!code || !String(code).trim()){      // no diagram -> render nothing
+    block.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  block.classList.remove('hidden');
+  container.innerHTML = `<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Rendering diagram…</div>`;
+  if(typeof mermaid === 'undefined' || !mermaid.render){
+    // CDN failed to load — degrade to showing the raw source
+    container.innerHTML = `<pre class="mono" style="font-size:12px;white-space:pre-wrap;margin:0;">${escapeHTML(code)}</pre>`;
+    return;
+  }
+  try{
+    const dark = document.documentElement.dataset.theme === 'dark';
+    mermaid.initialize({ startOnLoad:false, securityLevel:'strict', theme: dark ? 'dark' : 'default' });
+    const id = 'mmd-' + Date.now() + '-' + Math.floor(Math.random()*10000);
+    const { svg } = await mermaid.render(id, String(code).trim());
+    container.innerHTML = svg;
+  }catch(e){
+    container.innerHTML = `<div class="form-error">Could not render this diagram (the AI's Mermaid syntax may be invalid) — you can try redrawing it.</div>`;
+  }
+}
+
+function applyMeStatsSafe(resp){
+  applyMeStats({
+    xp: resp.xp, level: resp.level,
+    streak_count: resp.streak_count, badges: resp.badges,
+  });
+  return meStats;
+}
+
+/* ---- Public sharing (Feature 12) ---- */
+el('share-course').addEventListener('click', async ()=>{
+  const course = currentCourse();
+  if(!course) return;
+  const btn = el('share-course');
+  btn.disabled = true;
+  try{
+    const resp = await api(`/courses/${course.id}/share`, { method:'POST' });
+    const url = `${location.origin}/share/${resp.share_id}`;
+    el('share-panel-wrap').innerHTML = `
+      <div class="share-panel">
+        <input id="share-url" readonly value="${escapeAttr(url)}" onclick="this.select();" />
+        <button class="btn btn-primary btn-sm" id="copy-share-url">Copy link</button>
+        <button class="btn btn-ghost btn-sm" id="close-share-panel">✕</button>
+      </div>`;
+    el('copy-share-url').addEventListener('click', async ()=>{
+      const input = el('share-url');
+      let ok = false;
+      try{ await navigator.clipboard.writeText(input.value); ok = true; }catch(e){}
+      if(!ok){ try{ input.select(); ok = document.execCommand('copy'); }catch(e){} }
+      toast(ok ? '🔗' : '⚠️', ok ? 'Share link copied to clipboard.' : 'Copy failed — select the link and copy manually.');
+    });
+    el('close-share-panel').addEventListener('click', ()=>{ el('share-panel-wrap').innerHTML = ''; });
+  }catch(err){
+    alert('Could not create a share link: ' + err.message);
+  }
+  btn.disabled = false;
+});
+
+async function loadSharedCourse(shareId){
+  showView('shared');   // visitor mode: no topbar, no auth required
+  el('shared-title').textContent = '';
+  el('shared-desc').textContent = '';
+  el('shared-modules').innerHTML = `<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Loading shared course…</div>`;
+  try{
+    const course = await api('/shared/' + encodeURIComponent(shareId), { auth:false });
+    el('shared-title').textContent = course.title || 'Shared course';
+    el('shared-desc').textContent = course.description || '';
+    const holder = el('shared-modules');
+    holder.innerHTML = '';
+    (course.modules || []).forEach((m,i)=>{
+      const div = document.createElement('div');
+      div.className = 'shared-module';
+      div.innerHTML = `
+        <h3><span class="mod-num">${String(i+1).padStart(2,'0')}</span> ${escapeHTML(m.title)} ${m.completed ? '<span style="color:var(--success);">✓</span>' : ''}</h3>
+        <div class="notes">${renderMarkdown(m.notes || '')}</div>`;
+      holder.appendChild(div);
+    });
+  }catch(err){
+    el('shared-modules').innerHTML = `<div class="form-error">This shared course could not be loaded — the link may be wrong, or the course may have been removed.</div>`;
+  }
 }
 
 /* ---- Course header edit ---- */
@@ -1270,6 +2191,13 @@ el('mindmap-modal').addEventListener('click', (e)=>{
 
 /* ---------------- Boot ---------------- */
 (async function boot(){
+  // Public share links land on /share/{share_id} (Vercel rewrite or the
+  // FastAPI route) — render the read-only visitor view before anything else.
+  const sharedMatch = location.pathname.match(/^\/share\/([A-Za-z0-9-]+)\/?$/);
+  if(sharedMatch){
+    await loadSharedCourse(sharedMatch[1]);
+    return;
+  }
   const token = getToken();
   const storedUsername = getStoredUsername();
   if(token && storedUsername){
