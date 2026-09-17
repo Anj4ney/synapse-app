@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import random
 import re
 import time
 import urllib.parse
@@ -47,6 +48,36 @@ _QUOTA_ERROR_MARKERS = (
     "rate-limit",
 )
 
+# HTTP status codes that mean "temporary service/model overload", as
+# distinct from quota exhaustion (429). A project hitting one of these is
+# NOT out of quota - it's worth retrying, and only deprioritized (not
+# quota-cooled) if it keeps failing.
+_TRANSIENT_STATUS_CODES = (500, 503, 504)
+
+# Substrings that identify a transient/overload response body, in addition
+# to the status codes above. Checked case-insensitively, and only after
+# ruling out a quota error first (see _call_gemini) so the two never overlap.
+_TRANSIENT_ERROR_MARKERS = (
+    "unavailable",
+    "service_unavailable",
+    "overloaded",
+)
+
+# Exponential backoff schedule (seconds) for retrying the SAME project on a
+# transient error before giving up on it and rotating to the next one.
+# attempt 1 -> ~1s, attempt 2 -> ~2s, attempt 3 -> ~4s. A small amount of
+# random jitter is added on top of each delay to avoid retry storms when
+# many concurrent requests hit the same transient outage at once.
+_TRANSIENT_MAX_RETRIES = int(os.environ.get("GEMINI_TRANSIENT_MAX_RETRIES", "3"))
+_TRANSIENT_BASE_DELAY_SECONDS = float(os.environ.get("GEMINI_TRANSIENT_BASE_DELAY_SECONDS", "1.0"))
+_TRANSIENT_JITTER_RATIO = 0.25
+
+# How long (seconds) a project is deprioritized after exhausting its
+# transient-error retries, before it's eligible to be tried again. Shorter
+# than the quota cooldown since a 503 is usually a passing overload, not a
+# multi-minute quota reset.
+_TRANSIENT_COOLDOWN_SECONDS = float(os.environ.get("GEMINI_TRANSIENT_COOLDOWN_SECONDS", "20"))
+
 
 class AIError(Exception):
     pass
@@ -74,7 +105,7 @@ class _GeminiKeyPool:
 
     def __init__(self, keys: list[str]):
         self._projects = [
-            _GeminiProject(label=f"project_{i + 1}", api_key=k)
+            _GeminiProject(label=f"Project {i + 1}", api_key=k)
             for i, k in enumerate(keys)
         ]
         self._active_index = 0
@@ -102,6 +133,15 @@ class _GeminiKeyPool:
             idx = self._projects.index(project)
             self._active_index = (idx + 1) % len(self._projects)
 
+    async def mark_transient_unavailable(self, project: "_GeminiProject") -> None:
+        """Deprioritize a project after it exhausted its 503/overload retry
+        attempts. Shorter cooldown than a quota exhaustion - this is not a
+        quota signal, just "give it a little time before trying again"."""
+        async with self._lock:
+            project.unavailable_until = time.monotonic() + _TRANSIENT_COOLDOWN_SECONDS
+            idx = self._projects.index(project)
+            self._active_index = (idx + 1) % len(self._projects)
+
     async def mark_active(self, project: "_GeminiProject") -> None:
         async with self._lock:
             self._active_index = self._projects.index(project)
@@ -115,6 +155,25 @@ def _is_quota_error(status_code: int, body_text: str) -> bool:
         return True
     lowered = body_text.lower()
     return any(marker in lowered for marker in _QUOTA_ERROR_MARKERS)
+
+
+def _is_transient_error(status_code: int, body_text: str) -> bool:
+    """503/500/504 (or an UNAVAILABLE/overloaded body) - a temporary
+    service hiccup, not a quota problem. Callers must check
+    _is_quota_error() first so a 429 body that happens to mention
+    'unavailable' is never double-classified."""
+    if status_code in _TRANSIENT_STATUS_CODES:
+        return True
+    lowered = body_text.lower()
+    return any(marker in lowered for marker in _TRANSIENT_ERROR_MARKERS)
+
+
+def _backoff_delay(attempt_index: int) -> float:
+    """attempt_index 0 -> ~1s, 1 -> ~2s, 2 -> ~4s, plus a little jitter so
+    many concurrent requests retrying the same outage don't all wake up
+    and hammer Gemini at the exact same instant."""
+    base = _TRANSIENT_BASE_DELAY_SECONDS * (2 ** attempt_index)
+    return base + random.uniform(0, base * _TRANSIENT_JITTER_RATIO)
 
 
 def _require_key():
@@ -463,59 +522,99 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
             "Please try again in a minute."
         )
 
-    last_quota_error: AIError | None = None
+    last_error_detail: str | None = None
 
-    for project in projects:
+    for idx, project in enumerate(projects):
         headers = {
             "x-goog-api-key": project.api_key,
             "content-type": "application/json",
         }
         print(f"Gemini request -> {project.label}")
+        next_label = projects[idx + 1].label if idx + 1 < len(projects) else None
 
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(url, headers=headers, json=payload)
-        except httpx.HTTPError as e:
-            # str(e) is sometimes empty for connection-level errors, so include
-            # the exception type/repr too - that's what actually shows up in
-            # Vercel's function logs and makes this debuggable. Connection
-            # failures aren't a per-project quota signal, so they aren't
-            # retried against another project - same behavior as before.
-            detail = str(e) or repr(e)
-            raise AIError(f"Could not reach the Gemini API ({type(e).__name__}): {detail}")
+        # One client per project, reused across that project's own retry
+        # attempts (no need to tear down and reconnect between retries of
+        # the same project - only a fresh project gets a fresh client).
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = None
+            rotate_reason = None  # "quota" | "transient" | None
 
-        if resp.status_code != 200:
-            if _is_quota_error(resp.status_code, resp.text):
-                print(f"Gemini {project.label} -> {resp.status_code} quota exceeded. Switching project.")
-                await _gemini_pool.mark_quota_exceeded(project)
-                last_quota_error = AIError(
+            for attempt in range(_TRANSIENT_MAX_RETRIES + 1):  # 0 = first try
+                try:
+                    resp = await client.post(url, headers=headers, json=payload)
+                except httpx.HTTPError as e:
+                    # str(e) is sometimes empty for connection-level errors, so
+                    # include the exception type/repr too - that's what
+                    # actually shows up in Vercel's function logs. Connection
+                    # failures aren't a per-project availability signal from
+                    # Gemini itself, so they aren't retried against another
+                    # project - same behavior as before.
+                    detail = str(e) or repr(e)
+                    raise AIError(f"Could not reach the Gemini API ({type(e).__name__}): {detail}")
+
+                if resp.status_code == 200:
+                    break  # success - handled after this inner loop
+
+                last_error_detail = f"{project.label} -> {resp.status_code}: {resp.text[:300]}"
+
+                if _is_quota_error(resp.status_code, resp.text):
+                    print(f"{project.label} -> {resp.status_code} RESOURCE_EXHAUSTED")
+                    rotate_reason = "quota"
+                    resp = None
+                    break  # no point retrying quota on the same project
+
+                if _is_transient_error(resp.status_code, resp.text):
+                    print(f"{project.label} -> {resp.status_code} UNAVAILABLE")
+                    if attempt < _TRANSIENT_MAX_RETRIES:
+                        delay = _backoff_delay(attempt)
+                        print(f"Retrying {project.label} -> attempt {attempt + 2} (waiting {delay:.1f}s)")
+                        await asyncio.sleep(delay)
+                        continue  # retry the same project
+                    print(f"{project.label} -> still unavailable")
+                    rotate_reason = "transient"
+                    resp = None
+                    break
+
+                # Permanent-looking error (invalid key, auth failure, malformed
+                # request, invalid model, safety rejection, etc.) - don't
+                # rotate projects for this, surface it directly like before.
+                raise AIError(
                     f"Gemini API error ({resp.status_code}) using model '{GEMINI_MODEL}': {resp.text[:300]}"
                 )
+
+            if resp is None:
+                if rotate_reason == "quota":
+                    await _gemini_pool.mark_quota_exceeded(project)
+                    print(f"{project.label} temporarily unavailable (quota)")
+                else:
+                    await _gemini_pool.mark_transient_unavailable(project)
+                    print(f"{project.label} temporarily unavailable (overload)")
+                if next_label:
+                    print(f"Switching to {next_label}")
                 continue  # try the next available project
-            # Permanent-looking error (invalid key, auth failure, malformed
-            # request, invalid model, safety rejection, etc.) - don't rotate
-            # projects for this, surface it directly like before.
-            raise AIError(
-                f"Gemini API error ({resp.status_code}) using model '{GEMINI_MODEL}': {resp.text[:300]}"
-            )
 
-        print(f"Gemini {project.label} -> success")
-        await _gemini_pool.mark_active(project)
+            print(f"{project.label} -> success")
+            await _gemini_pool.mark_active(project)
 
-        data = resp.json()
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise AIError("No response candidates returned by Gemini.")
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise AIError("No response candidates returned by Gemini.")
 
-        parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(part.get("text", "") for part in parts if "text" in part)
-        if not text:
-            raise AIError("No text returned from Gemini.")
-        return text
+            parts = candidates[0].get("content", {}).get("parts", [])
+            text = "".join(part.get("text", "") for part in parts if "text" in part)
+            if not text:
+                raise AIError("No text returned from Gemini.")
+            return text
 
-    # Every available project hit its quota/rate limit during this request.
-    raise last_quota_error or AIError(
-        "All configured Gemini projects are currently rate-limited. Please try again in a minute."
+    # Every available project either hit its quota or stayed unavailable
+    # through its retries. Log the raw detail server-side for debugging but
+    # never expose it to the caller/frontend - just a clean, actionable
+    # message (same response shape callers already expect from AIError).
+    if last_error_detail:
+        print(f"All Gemini projects failed. Last error: {last_error_detail}")
+    raise AIError(
+        "The AI service is temporarily unavailable. Please try again in a minute."
     )
 
 
