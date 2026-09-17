@@ -1,0 +1,18 @@
+# Environment variables (secrets) - never commit these
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Local database
+synapse.db
+
+# OS/editor cruft
+.DS_Store
+.vscode/
