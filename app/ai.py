@@ -2,22 +2,126 @@ import asyncio
 import json
 import os
 import re
+import time
 import urllib.parse
+from dataclasses import dataclass
 import httpx
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+def _load_gemini_keys() -> list[str]:
+    """Reads GEMINI_API_KEY_1 / _2 / _3, in order, skipping any that are
+    missing so the app still works with only 1 or 2 configured. Falls back
+    to the old single GEMINI_API_KEY variable if none of the numbered ones
+    are set, so existing deployments don't break on upgrade."""
+    keys = [
+        v for v in (
+            os.environ.get("GEMINI_API_KEY_1"),
+            os.environ.get("GEMINI_API_KEY_2"),
+            os.environ.get("GEMINI_API_KEY_3"),
+        )
+        if v
+    ]
+    if not keys:
+        legacy = os.environ.get("GEMINI_API_KEY")
+        if legacy:
+            keys.append(legacy)
+    return keys
+
+
+GEMINI_API_KEYS = _load_gemini_keys()
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+# How long (seconds) a project is skipped after a quota/rate-limit error
+# before it's tried again. Overridable via env for tuning without a code
+# change.
+_QUOTA_COOLDOWN_SECONDS = float(os.environ.get("GEMINI_QUOTA_COOLDOWN_SECONDS", "60"))
+
+# Substrings that identify a quota/rate-limit response body, in addition to
+# a bare HTTP 429. Checked case-insensitively.
+_QUOTA_ERROR_MARKERS = (
+    "resource_exhausted",
+    "quota_exceeded",
+    "quota exceeded",
+    "rate limit",
+    "rate-limit",
+)
 
 
 class AIError(Exception):
     pass
 
 
+@dataclass
+class _GeminiProject:
+    label: str
+    api_key: str
+    unavailable_until: float = 0.0  # monotonic time; 0 means available now
+
+    def is_available(self, now: float) -> bool:
+        return now >= self.unavailable_until
+
+
+class _GeminiKeyPool:
+    """Tracks quota availability across the configured Gemini projects and
+    rotates between them on quota/rate-limit errors only.
+
+    All state (which project is "active", which are cooling down) is kept
+    in memory for this process and mutated only while holding `_lock`, so
+    concurrent requests can't corrupt it or pile onto a project another
+    request just found exhausted.
+    """
+
+    def __init__(self, keys: list[str]):
+        self._projects = [
+            _GeminiProject(label=f"project_{i + 1}", api_key=k)
+            for i, k in enumerate(keys)
+        ]
+        self._active_index = 0
+        self._lock = asyncio.Lock()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._projects)
+
+    async def ordered_available_projects(self) -> list[_GeminiProject]:
+        """Snapshot of currently-available projects, starting with the
+        preferred (active) one and wrapping around the rest in order."""
+        async with self._lock:
+            now = time.monotonic()
+            n = len(self._projects)
+            order = [(self._active_index + i) % n for i in range(n)]
+            return [self._projects[i] for i in order if self._projects[i].is_available(now)]
+
+    async def mark_quota_exceeded(self, project: "_GeminiProject") -> None:
+        async with self._lock:
+            project.unavailable_until = time.monotonic() + _QUOTA_COOLDOWN_SECONDS
+            # Shift preference to the next project immediately so other
+            # concurrent/subsequent requests stop picking the one we just
+            # learned is exhausted, instead of each discovering it the hard way.
+            idx = self._projects.index(project)
+            self._active_index = (idx + 1) % len(self._projects)
+
+    async def mark_active(self, project: "_GeminiProject") -> None:
+        async with self._lock:
+            self._active_index = self._projects.index(project)
+
+
+_gemini_pool = _GeminiKeyPool(GEMINI_API_KEYS)
+
+
+def _is_quota_error(status_code: int, body_text: str) -> bool:
+    if status_code == 429:
+        return True
+    lowered = body_text.lower()
+    return any(marker in lowered for marker in _QUOTA_ERROR_MARKERS)
+
+
 def _require_key():
-    if not GEMINI_API_KEY:
+    if not _gemini_pool.configured:
         raise AIError(
-            "The server is missing GEMINI_API_KEY. Set it as an environment variable in Vercel."
+            "The server is missing GEMINI_API_KEY_1 (or GEMINI_API_KEY). "
+            "Set at least one Gemini API key as an environment variable in Vercel."
         )
 
 
@@ -337,11 +441,7 @@ def _attempt_truncation_repair(s: str) -> str | None:
 
 async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000) -> str:
     _require_key()
-    url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
-    headers = {
-        "x-goog-api-key": GEMINI_API_KEY,
-        "content-type": "application/json",
-    }
+
     gen_config = {
         "responseMimeType": "application/json",
         "maxOutputTokens": max_tokens,
@@ -354,32 +454,69 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": gen_config,
     }
-    
-    try:
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-    except httpx.HTTPError as e:
-        # str(e) is sometimes empty for connection-level errors, so include
-        # the exception type/repr too - that's what actually shows up in
-        # Vercel's function logs and makes this debuggable.
-        detail = str(e) or repr(e)
-        raise AIError(f"Could not reach the Gemini API ({type(e).__name__}): {detail}")
+    url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
 
-    if resp.status_code != 200:
+    projects = await _gemini_pool.ordered_available_projects()
+    if not projects:
         raise AIError(
-            f"Gemini API error ({resp.status_code}) using model '{GEMINI_MODEL}': {resp.text[:300]}"
+            "All configured Gemini projects are currently rate-limited. "
+            "Please try again in a minute."
         )
 
-    data = resp.json()
-    candidates = data.get("candidates", [])
-    if not candidates:
-        raise AIError("No response candidates returned by Gemini.")
+    last_quota_error: AIError | None = None
 
-    parts = candidates[0].get("content", {}).get("parts", [])
-    text = "".join(part.get("text", "") for part in parts if "text" in part)
-    if not text:
-        raise AIError("No text returned from Gemini.")
-    return text
+    for project in projects:
+        headers = {
+            "x-goog-api-key": project.api_key,
+            "content-type": "application/json",
+        }
+        print(f"Gemini request -> {project.label}")
+
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+        except httpx.HTTPError as e:
+            # str(e) is sometimes empty for connection-level errors, so include
+            # the exception type/repr too - that's what actually shows up in
+            # Vercel's function logs and makes this debuggable. Connection
+            # failures aren't a per-project quota signal, so they aren't
+            # retried against another project - same behavior as before.
+            detail = str(e) or repr(e)
+            raise AIError(f"Could not reach the Gemini API ({type(e).__name__}): {detail}")
+
+        if resp.status_code != 200:
+            if _is_quota_error(resp.status_code, resp.text):
+                print(f"Gemini {project.label} -> {resp.status_code} quota exceeded. Switching project.")
+                await _gemini_pool.mark_quota_exceeded(project)
+                last_quota_error = AIError(
+                    f"Gemini API error ({resp.status_code}) using model '{GEMINI_MODEL}': {resp.text[:300]}"
+                )
+                continue  # try the next available project
+            # Permanent-looking error (invalid key, auth failure, malformed
+            # request, invalid model, safety rejection, etc.) - don't rotate
+            # projects for this, surface it directly like before.
+            raise AIError(
+                f"Gemini API error ({resp.status_code}) using model '{GEMINI_MODEL}': {resp.text[:300]}"
+            )
+
+        print(f"Gemini {project.label} -> success")
+        await _gemini_pool.mark_active(project)
+
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            raise AIError("No response candidates returned by Gemini.")
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(part.get("text", "") for part in parts if "text" in part)
+        if not text:
+            raise AIError("No text returned from Gemini.")
+        return text
+
+    # Every available project hit its quota/rate limit during this request.
+    raise last_quota_error or AIError(
+        "All configured Gemini projects are currently rate-limited. Please try again in a minute."
+    )
 
 
 async def generate_course(topic: str) -> dict:
