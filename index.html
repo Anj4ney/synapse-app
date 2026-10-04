@@ -122,7 +122,12 @@
     flex-shrink:0;transition:background .12s ease;
   }
   .sidebar-toggle:hover{background:#FBF3E6;}
-  .sidebar-toggle svg{width:20px;height:20px;}
+  .sidebar-toggle svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+  .sidebar-toggle:focus-visible{outline:2px solid var(--gold-2);outline-offset:2px;}
+  html[data-theme="dark"] .sidebar-toggle:hover, html[data-theme="dark"] .nav-item:hover{background:#202848;}
+  html[data-theme="dark"] .nav-item.active{background:#2A2340;}
+  /* Collapsed rail: hide the streak line so nothing is clipped */
+  body.sidebar-collapsed .streak-chip{display:none !important;}
   .sidebar-brand{
     font-family:'Fraunces',serif;font-weight:600;font-size:18px;color:var(--ink);
     display:flex;align-items:center;gap:9px;white-space:nowrap;
@@ -227,7 +232,9 @@
   .btn-sm{padding:8px 14px;font-size:13px;}
 
   /* ---------- Views ---------- */
-  .view{width:100%;}
+  .view{width:auto;max-width:100%;min-width:0;}
+  html{overflow-x:hidden;}
+  .dash-wrap,.course-wrap,.cert-page{min-width:0;}
 
   /* AUTH VIEW */
   .auth-view{min-height:100vh;display:grid;grid-template-columns:1.1fr 1fr;}
@@ -352,6 +359,9 @@
   .course-progress .cp-badge.muted{background:var(--line);color:var(--muted);}
   .course-body{display:grid;grid-template-columns:270px 1fr;gap:32px;align-items:start;}
   @media(max-width:800px){.course-body{grid-template-columns:1fr;}}
+  .course-body > *{min-width:0;}
+  .course-body iframe, .course-body img, .course-body video{max-width:100%;}
+  .course-body pre{overflow-x:auto;max-width:100%;}
   .module-rail{position:sticky;top:80px;border:1px solid var(--line);border-radius:14px;background:var(--paper-2);overflow:hidden;}
   .module-item{
     display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border-bottom:1px solid var(--line);background:none;border-left:3px solid transparent;
@@ -700,6 +710,24 @@
   html[data-theme="dark"] .lb-row.me{background:linear-gradient(135deg,#1A2140 0%,#2A2340 100%);}
   html[data-theme="dark"] .ask-form input,
   html[data-theme="dark"] .mynotes-form textarea{background:var(--paper-2);color:var(--ink);}
+  /* ---- Final quiz + results: dark-mode fixes (cards hardcoded light colours) ---- */
+  html[data-theme="dark"] .fq-modal{background:rgba(6,9,20,0.72);}
+  html[data-theme="dark"] .fq-q,
+  html[data-theme="dark"] .fq-list-item,
+  html[data-theme="dark"] .fq-review-q{background:#202848;border-color:var(--line);color:var(--ink);}
+  html[data-theme="dark"] .fq-q .fq-q-text,
+  html[data-theme="dark"] .fq-review-q .fq-rv-q{color:var(--ink);}
+  html[data-theme="dark"] .fq-q .fq-opt{background:#141A31;border-color:var(--line);color:var(--ink);}
+  html[data-theme="dark"] .fq-q .fq-opt:hover{background:#2A2340;border-color:var(--gold);}
+  html[data-theme="dark"] .fq-q .fq-opt.selected{background:#3A2F16;border-color:var(--gold);color:#FFF3DA;}
+  html[data-theme="dark"] .fq-result-badge.pass{background:rgba(76,192,131,0.16);color:#7FE0AB;}
+  html[data-theme="dark"] .fq-result-badge.fail{background:rgba(224,103,76,0.16);color:#F4A593;}
+  html[data-theme="dark"] .fq-list-item .fq-li-topic{color:var(--gold-2);}
+  html[data-theme="dark"] .course-card .cc-final-score,
+  html[data-theme="dark"] .cert-code{background:#3A2F16;color:#FFF3DA;}
+  html[data-theme="dark"] .course-card .cc-view-cert:hover{background:#2A2340;}
+  html[data-theme="dark"] .cert-list-card .clc-code,
+  html[data-theme="dark"] .quiz-history{background:#202848;color:var(--ink);}
   html[data-theme="dark"] .toast{background:#E8EBF8;color:#101528;}
   /* The mind map SVG hardcodes light palette colors; inverting keeps it
      readable in dark mode without touching its generator. */
