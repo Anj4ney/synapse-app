@@ -416,6 +416,43 @@ def _escape_raw_control_chars_in_strings(s: str) -> str:
     return "".join(out)
 
 
+def _escape_inner_quotes_in_strings(s: str) -> str:
+    """Repairs the other common way Gemini corrupts JSON: an unescaped double
+    quote INSIDE a string value (e.g. ...called "synapse" in...), which ends
+    the string early and surfaces as "Expecting ',' delimiter". Heuristic: a
+    quote inside a string is the real closing quote only if the next
+    non-space character is , } ] or : (or end of text); otherwise it is
+    escaped."""
+    out = []
+    in_string = False
+    escaped = False
+    n = len(s)
+    for i, ch in enumerate(s):
+        if in_string:
+            if escaped:
+                out.append(ch)
+                escaped = False
+            elif ch == "\\":
+                out.append(ch)
+                escaped = True
+            elif ch == '"':
+                j = i + 1
+                while j < n and s[j] in " \t\r\n":
+                    j += 1
+                if j >= n or s[j] in ",}]:":
+                    in_string = False
+                    out.append(ch)
+                else:
+                    out.append('\\"')
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+    return "".join(out)
+
+
 def _clean_json(raw: str) -> dict:
     raw = raw.strip()
     if "```" in raw:
@@ -430,6 +467,9 @@ def _clean_json(raw: str) -> dict:
     sanitized = _escape_raw_control_chars_in_strings(raw)
     if sanitized != raw:
         candidates.append(sanitized)
+    quote_fixed = _escape_inner_quotes_in_strings(sanitized)
+    if quote_fixed != sanitized:
+        candidates.append(quote_fixed)
 
     last_err = None
     for candidate in candidates:
@@ -498,13 +538,13 @@ def _attempt_truncation_repair(s: str) -> str | None:
     return out
 
 
-async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000) -> str:
+async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000, temperature: float = 0.7) -> str:
     _require_key()
 
     gen_config = {
         "responseMimeType": "application/json",
         "maxOutputTokens": max_tokens,
-        "temperature": 0.7,
+        "temperature": temperature,
     }
     if schema:
         gen_config["responseSchema"] = schema
@@ -618,6 +658,23 @@ async def _call_gemini(prompt: str, schema: dict = None, max_tokens: int = 4000)
     )
 
 
+async def _call_gemini_json(prompt: str, schema: dict, max_tokens: int, attempts: int = 3) -> dict:
+    """Call Gemini and parse the JSON, retrying when the model returns
+    malformed JSON (a random, usually one-off glitch). Retries use a lower
+    temperature so the output is more predictable. Transport/quota errors
+    raised by _call_gemini itself are NOT retried here."""
+    last_err = None
+    for attempt in range(attempts):
+        temp = 0.7 if attempt == 0 else 0.3
+        raw = await _call_gemini(prompt, schema=schema, max_tokens=max_tokens, temperature=temp)
+        try:
+            return _clean_json(raw)
+        except AIError as e:
+            last_err = e
+            print(f"[ai] malformed JSON, attempt {attempt + 1}/{attempts}: {e}")
+    raise AIError(str(last_err) if last_err else "Could not parse the AI response.")
+
+
 async def generate_course(topic: str) -> dict:
     prompt = (
         f"Design a high-quality 4-module short course on: {topic}.\n"
@@ -633,7 +690,9 @@ async def generate_course(topic: str) -> dict:
         "for that point.\n"
         "- Video query: specific YouTube search phrase (8 words or fewer).\n"
         "- Blog query: a specific search phrase to find one good written article "
-        "or blog post on this subtopic (8 words or fewer)."
+        "or blog post on this subtopic (8 words or fewer).\n"
+        "- Never use double-quote characters inside any text value; use single "
+        "quotes instead so the JSON stays valid."
     )
     course_schema = {
         "type": "OBJECT",
@@ -657,8 +716,7 @@ async def generate_course(topic: str) -> dict:
         "required": ["title", "description", "modules"],
     }
 
-    raw = await _call_gemini(prompt, schema=course_schema, max_tokens=4000)
-    parsed = _clean_json(raw)
+    parsed = await _call_gemini_json(prompt, schema=course_schema, max_tokens=4000)
 
     if not isinstance(parsed, dict) or not parsed.get("title") or not isinstance(parsed.get("modules"), list):
         raise AIError("Incomplete course data returned by the model.")
@@ -715,8 +773,7 @@ async def generate_module(course_title: str, lesson_topic: str, difficulty: str 
         "required": ["title", "notes", "videoQuery", "blogQuery"],
     }
 
-    raw = await _call_gemini(prompt, schema=module_schema, max_tokens=2000)
-    parsed = _clean_json(raw)
+    parsed = await _call_gemini_json(prompt, schema=module_schema, max_tokens=2000)
 
     if not isinstance(parsed, dict) or not parsed.get("title") or not parsed.get("notes"):
         raise AIError("Incomplete lesson data returned by the model.")
@@ -763,8 +820,7 @@ async def generate_quiz(module_title: str, module_notes: str) -> dict:
         "required": ["questions"],
     }
 
-    raw = await _call_gemini(prompt, schema=quiz_schema, max_tokens=2500)
-    parsed = _clean_json(raw)
+    parsed = await _call_gemini_json(prompt, schema=quiz_schema, max_tokens=2500)
 
     if not isinstance(parsed, dict) or not isinstance(parsed.get("questions"), list) or not parsed["questions"]:
         raise AIError("Incomplete quiz data returned by the model.")
@@ -799,8 +855,7 @@ async def generate_flashcards(module_title: str, module_notes: str) -> dict:
         "required": ["cards"],
     }
 
-    raw = await _call_gemini(prompt, schema=fc_schema, max_tokens=2000)
-    parsed = _clean_json(raw)
+    parsed = await _call_gemini_json(prompt, schema=fc_schema, max_tokens=2000)
 
     if not isinstance(parsed, dict) or not isinstance(parsed.get("cards"), list) or not parsed["cards"]:
         raise AIError("Incomplete flashcard data returned by the model.")
@@ -1018,8 +1073,13 @@ async def _call_gemini_validated(prompt, schema, max_tokens, validator, max_retr
     last_err = None
     for attempt in range(attempts):
         try:
-            raw = await _call_gemini(prompt, schema=schema, max_tokens=max_tokens)
-            parsed = _clean_json(raw)
+            raw = await _call_gemini(prompt, schema=schema, max_tokens=max_tokens,
+                                     temperature=0.7 if attempt == 0 else 0.3)
+            try:
+                parsed = _clean_json(raw)
+            except AIError as parse_err:
+                # Malformed JSON from the model: treat like a validation miss.
+                raise ValueError(str(parse_err))
             return validator(parsed)
         except AIError:
             # Transport/quota error — _call_gemini already retried at the
