@@ -126,6 +126,19 @@
   .sidebar-toggle:focus-visible{outline:2px solid var(--gold-2);outline-offset:2px;}
   html[data-theme="dark"] .sidebar-toggle:hover, html[data-theme="dark"] .nav-item:hover{background:#202848;}
   html[data-theme="dark"] .nav-item.active{background:#2A2340;}
+  /* ---- Collapsed rail fixes: labels were only faded (still taking width), which
+         pushed the icons out of the 68px rail and caused a sideways scrollbar. ---- */
+  .sidebar{overflow:hidden;}
+  .sidebar-nav, .sidebar-footer{overflow-x:hidden;}
+  body.sidebar-collapsed .nav-item .nav-label,
+  body.sidebar-collapsed .sidebar-brand,
+  body.sidebar-collapsed .sidebar-user .user-meta{display:none !important;}
+  body.sidebar-collapsed .sidebar-header{padding:14px 0;justify-content:center;}
+  body.sidebar-collapsed .nav-item{gap:0;justify-content:center;padding:11px 0;}
+  body.sidebar-collapsed .nav-item.active::before{left:-12px;}
+  body.sidebar-collapsed .sidebar-nav, body.sidebar-collapsed .sidebar-footer{padding-left:12px;padding-right:12px;}
+  body.sidebar-collapsed .sidebar-user{gap:0;justify-content:center;padding:8px 0;}
+  body.sidebar-collapsed .sidebar-stats{display:none;}
   /* Collapsed rail: hide the streak line so nothing is clipped */
   body.sidebar-collapsed .streak-chip{display:none !important;}
   .sidebar-brand{
