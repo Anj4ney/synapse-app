@@ -975,3 +975,412 @@ async def explain_like_im_five(module_title: str, module_notes: str) -> str:
     if not summary or not str(summary).strip():
         raise AIError("No simplified summary returned by the model.")
     return str(summary).strip()
+
+
+# ===========================================================================
+# Feature 2 — Final course quiz (20 marks) + AI performance analysis
+#
+# Two new generators:
+#   - generate_final_quiz(course_title, modules): produces exactly 20 MCQs,
+#     4 options each, mixed difficulty (~8 easy / 8 medium / 4 hard), each
+#     tagged with the lesson title it covers. Returns a split structure:
+#     {questions: [...no correct_index...], answers: [...correct_index +
+#     explanation + topic + difficulty...]} so the server never has to send
+#     the correct answers to the browser.
+#   - generate_quiz_analysis(course_title, score, total, topic_breakdown,
+#     wrong_questions): produces the strengths/weaknesses/advice JSON the
+#     results screen renders.
+#
+# Both reuse the existing _call_gemini key-pool + transient retry underneath,
+# and add an APPLICATION-LEVEL retry wrapper on top: if the parsed JSON fails
+# structural validation, we re-prompt Gemini up to FINAL_QUIZ_GEN_RETRIES
+# times before giving up with a friendly AIError. This handles the "Gemini
+# sometimes returns malformed JSON" failure mode the spec calls out.
+# ===========================================================================
+
+# Application-level retry cap for AI calls whose output must satisfy a
+# structural validator (not just be valid JSON). Distinct from the
+# transport-level _TRANSIENT_MAX_RETRIES in _call_gemini.
+FINAL_QUIZ_GEN_RETRIES = int(os.environ.get("FINAL_QUIZ_GEN_RETRIES", "3"))
+FINAL_QUIZ_QUESTION_COUNT = 20
+FINAL_QUIZ_OPTIONS_PER_Q = 4
+
+
+async def _call_gemini_validated(prompt, schema, max_tokens, validator, max_retries=None):
+    """Call Gemini, clean the JSON, then run it through `validator(parsed)`.
+    If the validator raises ValueError, retry the whole call up to
+    `max_retries` times (defaults to FINAL_QUIZ_GEN_RETRIES).
+
+    The validator should return the (possibly normalized) parsed object on
+    success, or raise ValueError with a descriptive message on failure.
+    """
+    attempts = max_retries if max_retries is not None else FINAL_QUIZ_GEN_RETRIES
+    last_err = None
+    for attempt in range(attempts):
+        try:
+            raw = await _call_gemini(prompt, schema=schema, max_tokens=max_tokens)
+            parsed = _clean_json(raw)
+            return validator(parsed)
+        except AIError:
+            # Transport/quota error — _call_gemini already retried at the
+            # transport level. Don't loop on these; surface to the caller.
+            raise
+        except ValueError as e:
+            last_err = e
+            print(f"[final-quiz] attempt {attempt + 1}/{attempts} validation failed: {e}")
+            if attempt + 1 < attempts:
+                continue
+    raise AIError(
+        f"The AI returned malformed quiz data after {attempts} attempts. "
+        f"Please try again. (last issue: {last_err})"
+    )
+
+
+def _validate_final_quiz(parsed):
+    """Structural validator for generate_final_quiz's output.
+
+    Accepts either {questions: [...]} or a bare list. Normalizes to a dict
+    {questions: [...], answers: [...]} where:
+      - questions[i] = {question, options:[str x4], topic, difficulty}
+      - answers[i]   = {correct_index (0-3), explanation, topic, difficulty}
+
+    Enforces exactly FINAL_QUIZ_QUESTION_COUNT questions, 4 options each,
+    valid correct_index, and presence of all required fields. Raises
+    ValueError with a descriptive message on any failure.
+    """
+    if isinstance(parsed, dict) and "questions" in parsed:
+        questions = parsed["questions"]
+    elif isinstance(parsed, list):
+        questions = parsed
+    else:
+        raise ValueError("expected a list of questions or {questions: [...]}")
+
+    if not isinstance(questions, list):
+        raise ValueError("questions is not a list")
+    if len(questions) != FINAL_QUIZ_QUESTION_COUNT:
+        raise ValueError(
+            f"expected exactly {FINAL_QUIZ_QUESTION_COUNT} questions, got {len(questions)}"
+        )
+
+    out_questions = []
+    out_answers = []
+    for i, q in enumerate(questions):
+        if not isinstance(q, dict):
+            raise ValueError(f"question {i} is not an object")
+
+        question_text = str(q.get("question") or "").strip()
+        if not question_text:
+            raise ValueError(f"question {i} is missing 'question' text")
+
+        options = q.get("options")
+        if not isinstance(options, list) or len(options) != FINAL_QUIZ_OPTIONS_PER_Q:
+            raise ValueError(
+                f"question {i} must have exactly {FINAL_QUIZ_OPTIONS_PER_Q} options"
+            )
+        opts = [str(o).strip() for o in options]
+        if any(not o for o in opts):
+            raise ValueError(f"question {i} has an empty option")
+
+        # correct_index may be 0-3 (int) or "0".."3" (str) — normalize to int
+        ci = q.get("correct_index")
+        if ci is None:
+            raise ValueError(f"question {i} is missing 'correct_index'")
+        try:
+            correct_index = int(ci)
+        except (TypeError, ValueError):
+            raise ValueError(f"question {i} 'correct_index' is not an integer: {ci!r}")
+        if not (0 <= correct_index < FINAL_QUIZ_OPTIONS_PER_Q):
+            raise ValueError(
+                f"question {i} 'correct_index' out of range (0-{FINAL_QUIZ_OPTIONS_PER_Q - 1}): {correct_index}"
+            )
+
+        topic = str(q.get("topic") or "").strip()
+        if not topic:
+            raise ValueError(f"question {i} is missing 'topic'")
+
+        difficulty = str(q.get("difficulty") or "medium").strip().lower()
+        if difficulty not in ("easy", "medium", "hard"):
+            difficulty = "medium"
+
+        explanation = str(q.get("explanation") or "").strip()
+
+        out_questions.append({
+            "question": question_text,
+            "options": opts,
+            "topic": topic,
+            "difficulty": difficulty,
+        })
+        out_answers.append({
+            "correct_index": correct_index,
+            "explanation": explanation,
+            "topic": topic,
+            "difficulty": difficulty,
+        })
+
+    return {"questions": out_questions, "answers": out_answers}
+
+
+async def generate_final_quiz(course_title: str, modules: list) -> dict:
+    """Generate the 20-mark final quiz for a course, covering ALL lessons
+    roughly evenly. Returns {questions: [...], answers: [...]} where
+    `questions` is safe to send to the browser and `answers` is server-only.
+
+    `modules` is the course's list of lesson dicts (each must have at least
+    a "title"; notes are passed to give the model real content to quiz on).
+    """
+    if not modules:
+        raise AIError("Cannot generate a final quiz for a course with no lessons.")
+
+    # Build a per-lesson budget so the 20 questions cover every lesson roughly
+    # evenly. We hand the model the exact counts in the prompt so it knows how
+    # many to write per lesson.
+    n = len(modules)
+    base_per_lesson = FINAL_QUIZ_QUESTION_COUNT // n
+    extra = FINAL_QUIZ_QUESTION_COUNT - (base_per_lesson * n)
+    # Distribute the remainder (0..n-1) one each to the first few lessons
+    per_lesson = [base_per_lesson + (1 if i < extra else 0) for i in range(n)]
+
+    lessons_block = "\n".join(
+        f"Lesson {i + 1} (write exactly {per_lesson[i]} questions for this one): "
+        f'"{m.get("title", "")}" — {str(m.get("notes", ""))[:400]}'
+        for i, m in enumerate(modules)
+    )
+
+    prompt = (
+        f'Course: "{course_title}"\n\n'
+        f"Lessons in this course:\n{lessons_block}\n\n"
+        f"Write a final exam of EXACTLY {FINAL_QUIZ_QUESTION_COUNT} multiple-choice "
+        f"questions covering ALL the lessons above, distributed roughly evenly "
+        f"as specified per lesson. Each question must:\n"
+        f"- Have exactly {FINAL_QUIZ_OPTIONS_PER_Q} options (plain text, no letter prefixes)\n"
+        f"- Have exactly one correct answer indicated by 'correct_index' (an integer 0-3)\n"
+        f"- Be tagged with the EXACT lesson title it tests in 'topic'\n"
+        f"- Have a 'difficulty' field of 'easy', 'medium', or 'hard'\n"
+        f"  (aim for roughly 8 easy, 8 medium, 4 hard across the whole quiz)\n"
+        f"- Have a short 'explanation' (1-2 sentences) of why the correct answer is right\n"
+        f"Return JSON: {{\"questions\": [{{\"question\": str, \"options\": [str, str, str, str], "
+        f"\"correct_index\": int, \"topic\": str, \"difficulty\": str, \"explanation\": str}}, ...]}}.\n"
+        f"Do NOT wrap the JSON in code fences. Do NOT include any text outside the JSON."
+    )
+    quiz_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "questions": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "question": {"type": "STRING"},
+                        "options": {
+                            "type": "ARRAY",
+                            "items": {"type": "STRING"},
+                        },
+                        "correct_index": {"type": "INTEGER"},
+                        "topic": {"type": "STRING"},
+                        "difficulty": {"type": "STRING"},
+                        "explanation": {"type": "STRING"},
+                    },
+                    "required": [
+                        "question", "options", "correct_index",
+                        "topic", "difficulty", "explanation",
+                    ],
+                },
+            },
+        },
+        "required": ["questions"],
+    }
+
+    return await _call_gemini_validated(
+        prompt, schema=quiz_schema, max_tokens=8000,
+        validator=_validate_final_quiz,
+    )
+
+
+def _validate_quiz_analysis(parsed):
+    """Structural validator for generate_quiz_analysis's output. Returns a
+    normalized dict with the exact shape the spec requires:
+      {summary, strengths:[{topic, comment}], weaknesses:[{topic, comment}],
+       advice:[{topic, action}], next_steps}
+    """
+    if not isinstance(parsed, dict):
+        raise ValueError("analysis root is not an object")
+
+    def _str(v, default=""):
+        return str(v).strip() if v is not None else default
+
+    def _list_of_pairs(key, inner_keys):
+        items = parsed.get(key, [])
+        if not isinstance(items, list):
+            raise ValueError(f"'{key}' must be a list")
+        out = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            entry = {k: _str(it.get(k)) for k in inner_keys}
+            # Skip entries with no content at all
+            if any(entry.values()):
+                out.append(entry)
+        return out
+
+    return {
+        "summary": _str(parsed.get("summary")),
+        "strengths": _list_of_pairs("strengths", ["topic", "comment"]),
+        "weaknesses": _list_of_pairs("weaknesses", ["topic", "comment"]),
+        "advice": _list_of_pairs("advice", ["topic", "action"]),
+        "next_steps": _str(parsed.get("next_steps")),
+    }
+
+
+async def generate_quiz_analysis(
+    course_title: str,
+    score: int,
+    total: int,
+    topic_breakdown: dict,
+    wrong_questions: list,
+) -> dict:
+    """Generate the strengths/weaknesses/advice analysis for a graded quiz
+    attempt. `topic_breakdown` is {topic: {correct, total, pct}} and
+    `wrong_questions` is a list of {question, your_answer, correct_answer,
+    topic}. Returns the normalized analysis dict.
+
+    Falls back to None on failure (caller then uses the rule-based fallback).
+    """
+    pct = round(100.0 * score / total, 1) if total else 0.0
+    # Compact the wrong_questions so the prompt stays small
+    wrong_block = "\n".join(
+        f"- Q: \"{w.get('question', '')[:160]}\" | topic: {w.get('topic', '?')} | "
+        f"your answer: \"{w.get('your_answer', '?')}\" | correct: \"{w.get('correct_answer', '?')}\""
+        for w in wrong_questions[:20]  # cap to keep the prompt bounded
+    ) or "(none — every question correct)"
+
+    topic_block = "\n".join(
+        f"- {topic}: {data.get('correct', 0)}/{data.get('total', 0)} "
+        f"({round(data.get('pct', 0))}%)"
+        for topic, data in topic_breakdown.items()
+    ) or "(no topic breakdown available)"
+
+    prompt = (
+        f'Course: "{course_title}"\n'
+        f"Final quiz result: {score}/{total} ({pct}%).\n\n"
+        f"Per-topic breakdown:\n{topic_block}\n\n"
+        f"Questions the learner got wrong (with their answer and the correct answer):\n"
+        f"{wrong_block}\n\n"
+        "Produce a JSON object with EXACTLY these fields:\n"
+        "{\n"
+        "  \"summary\": \"2-3 sentence overall assessment\",\n"
+        "  \"strengths\": [{\"topic\": str, \"comment\": str}, ...],\n"
+        "  \"weaknesses\": [{\"topic\": str, \"comment\": str}, ...],\n"
+        "  \"advice\": [{\"topic\": str, \"action\": \"specific study step\"}, ...],\n"
+        "  \"next_steps\": \"short motivating closing paragraph\"\n"
+        "}\n"
+        "Rules:\n"
+        "- Strengths = topics the learner did well on (high pct).\n"
+        "- Weaknesses = topics the learner struggled on (low pct).\n"
+        "- Advice = a concrete, specific next study step per weak topic.\n"
+        "- next_steps = encouraging, actionable, 2-3 sentences.\n"
+        "- Do NOT wrap the JSON in code fences. Output ONLY the JSON object."
+    )
+    analysis_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "summary": {"type": "STRING"},
+            "strengths": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "topic": {"type": "STRING"},
+                        "comment": {"type": "STRING"},
+                    },
+                    "required": ["topic", "comment"],
+                },
+            },
+            "weaknesses": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "topic": {"type": "STRING"},
+                        "comment": {"type": "STRING"},
+                    },
+                    "required": ["topic", "comment"],
+                },
+            },
+            "advice": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "topic": {"type": "STRING"},
+                        "action": {"type": "STRING"},
+                    },
+                    "required": ["topic", "action"],
+                },
+            },
+            "next_steps": {"type": "STRING"},
+        },
+        "required": ["summary", "strengths", "weaknesses", "advice", "next_steps"],
+    }
+
+    return await _call_gemini_validated(
+        prompt, schema=analysis_schema, max_tokens=2000,
+        validator=_validate_quiz_analysis,
+    )
+
+
+def rule_based_analysis(course_title, score, total, topic_breakdown, wrong_questions):
+    """Fallback analysis generator when the AI analysis call fails. Produces
+    the same shape as generate_quiz_analysis() but derived purely from the
+    topic breakdown:
+      - pct >= 70 -> strength
+      - pct < 50  -> weakness
+      - in between -> 'needs revision' (mentioned in summary, not in either list)
+    The user ALWAYS gets a result — the quiz submission never fails just
+    because the AI analysis failed.
+    """
+    pct = round(100.0 * score / total, 1) if total else 0.0
+    strengths = []
+    weaknesses = []
+    advice = []
+    for topic, data in topic_breakdown.items():
+        tpct = data.get("pct", 0)
+        if tpct >= 70:
+            strengths.append({
+                "topic": topic,
+                "comment": f"You answered {data.get('correct', 0)} of "
+                           f"{data.get('total', 0)} correctly on this topic.",
+            })
+        elif tpct < 50:
+            weaknesses.append({
+                "topic": topic,
+                "comment": f"You answered {data.get('correct', 0)} of "
+                            f"{data.get('total', 0)} correctly here — revisit this lesson.",
+            })
+            advice.append({
+                "topic": topic,
+                "action": f"Re-read the lesson on '{topic}' and retake the quiz.",
+            })
+
+    if not strengths and not weaknesses:
+        summary = (
+            f"You scored {score}/{total} ({pct}%) on the {course_title} final quiz. "
+            "We could not generate a detailed AI analysis this time, but every topic "
+            "is in the 'needs revision' band — keep practising."
+        )
+    else:
+        summary = (
+            f"You scored {score}/{total} ({pct}%) on the {course_title} final quiz. "
+            + (f"Strong topics: {', '.join(s['topic'] for s in strengths)}. " if strengths else "")
+            + (f"Topics to revisit: {', '.join(w['topic'] for w in weaknesses)}." if weaknesses else "")
+        )
+
+    return {
+        "summary": summary.strip(),
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "advice": advice,
+        "next_steps": (
+            "Keep up the momentum — every retake sharpens your understanding. "
+            "Revisit the weak topics above and try the quiz again when you're ready."
+        ),
+    }
