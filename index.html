@@ -15,6 +15,18 @@
       document.documentElement.dataset.theme = (t === 'dark') ? 'dark' : 'light';
     }catch(e){}
   })();
+  // Feature 5 — early sidebar-state init: apply the collapsed class to <body>
+  // before first paint so the sidebar starts at the right width with no flash.
+  // The sidebar element itself is hidden via .hidden until enterApp() removes it,
+  // but the body class needs to be set early so the main content's margin-left
+  // is correct from the first frame.
+  (function(){
+    try{
+      if(localStorage.getItem('synapse_sidebar_collapsed') === '1'){
+        document.body.classList.add('sidebar-collapsed');
+      }
+    }catch(e){}
+  })();
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -72,6 +84,135 @@
   .link-btn{background:none;border:none;color:var(--muted);font-size:14px;padding:6px 4px;border-bottom:1px solid transparent;}
   .link-btn:hover{color:var(--ink);border-color:var(--line);}
   .link-btn:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible{outline:2px solid var(--gold-2);outline-offset:2px;}
+
+  /* ========================================================================
+     Feature 5 — Collapsible left sidebar menu
+     Replaces the old topbar. The sidebar is fixed to the left edge, full
+     height, and toggles between EXPANDED (252px, icon + label) and COLLAPSED
+     (68px, icon only with tooltip). On mobile (<768px) it becomes an
+     off-canvas drawer that slides in over a dark overlay.
+
+     CSS variables drive the width so the main content's margin-left can
+     transition smoothly. body classes control the state:
+       (default)               -> expanded (252px)
+       body.sidebar-collapsed  -> collapsed (68px)
+       body.no-sidebar         -> sidebar hidden entirely (auth/shared views)
+       body.sidebar-open       -> mobile drawer visible (overlay shown)
+     ======================================================================== */
+  :root{ --sidebar-w: 252px; --sidebar-w-collapsed: 68px; --sidebar-transition: .25s ease; }
+
+  .sidebar{
+    position:fixed;top:0;left:0;height:100vh;width:var(--sidebar-w);
+    background:var(--paper-2);border-right:1px solid var(--line);
+    z-index:40;display:flex;flex-direction:column;
+    transition:width var(--sidebar-transition);
+    overflow:hidden;
+  }
+  body.sidebar-collapsed .sidebar{ width:var(--sidebar-w-collapsed); }
+
+  /* Sidebar header — hamburger toggle + brand */
+  .sidebar-header{
+    display:flex;align-items:center;gap:12px;
+    padding:18px 20px;border-bottom:1px solid var(--line);
+    flex-shrink:0;min-height:64px;
+  }
+  .sidebar-toggle{
+    background:none;border:none;color:var(--ink);cursor:pointer;
+    width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;transition:background .12s ease;
+  }
+  .sidebar-toggle:hover{background:#FBF3E6;}
+  .sidebar-toggle svg{width:20px;height:20px;}
+  .sidebar-brand{
+    font-family:'Fraunces',serif;font-weight:600;font-size:18px;color:var(--ink);
+    display:flex;align-items:center;gap:9px;white-space:nowrap;
+    transition:opacity var(--sidebar-transition);
+  }
+  .sidebar-brand .dot{width:8px;height:8px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 3px rgba(232,163,61,0.18);flex-shrink:0;}
+  body.sidebar-collapsed .sidebar-brand{opacity:0;pointer-events:none;}
+
+  /* Sidebar nav — vertical list of nav items */
+  .sidebar-nav{flex:1;padding:12px 12px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;}
+  .nav-item{
+    display:flex;align-items:center;gap:14px;
+    padding:11px 14px;border:none;background:none;color:var(--ink-2);
+    font-family:'Inter',sans-serif;font-size:14px;font-weight:500;
+    border-radius:10px;cursor:pointer;width:100%;text-align:left;
+    transition:background .12s ease,color .12s ease;
+    position:relative;text-decoration:none;
+  }
+  .nav-item:hover{background:#F4F6FB;color:var(--ink);}
+  .nav-item.active{background:#FBF3E6;color:var(--gold-2);font-weight:600;}
+  .nav-item.active::before{
+    content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+    width:3px;height:60%;background:var(--gold);border-radius:0 3px 3px 0;
+  }
+  .nav-item svg{width:20px;height:20px;flex-shrink:0;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .nav-item .nav-label{white-space:nowrap;transition:opacity var(--sidebar-transition);}
+  body.sidebar-collapsed .nav-item .nav-label{opacity:0;pointer-events:none;}
+
+  /* Collapsed: center the icon and add a tooltip via title attr */
+  body.sidebar-collapsed .nav-item{justify-content:center;padding:11px 0;}
+
+  /* Sidebar footer — theme toggle + user chip + sign out */
+  .sidebar-footer{
+    padding:12px;border-top:1px solid var(--line);flex-shrink:0;
+    display:flex;flex-direction:column;gap:4px;
+  }
+  .sidebar-user{
+    display:flex;align-items:center;gap:12px;padding:8px 14px;
+    transition:opacity var(--sidebar-transition);overflow:hidden;
+  }
+  body.sidebar-collapsed .sidebar-user{justify-content:center;padding:8px 0;}
+  body.sidebar-collapsed .sidebar-user .user-meta{opacity:0;pointer-events:none;}
+  .sidebar-user .avatar{width:32px;height:32px;flex-shrink:0;}
+  .sidebar-user .user-meta{display:flex;flex-direction:column;gap:1px;overflow:hidden;transition:opacity var(--sidebar-transition);}
+  .sidebar-user .user-meta .username{font-size:13px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .sidebar-user .user-meta .user-stats{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--muted);white-space:nowrap;}
+  .sidebar-user .user-meta .user-stats .flame{font-size:11px;}
+
+  /* Sidebar footer XP/streak mini-bar (shown in expanded mode only) */
+  .sidebar-stats{
+    padding:0 14px 8px;display:flex;align-items:center;gap:10px;
+    transition:opacity var(--sidebar-transition);
+  }
+  body.sidebar-collapsed .sidebar-stats{opacity:0;height:0;padding:0;overflow:hidden;}
+  .sidebar-stats .level-badge{font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;color:#221607;background:var(--gold);border-radius:5px;padding:2px 6px;white-space:nowrap;}
+  .sidebar-stats .xp-bar{flex:1;height:5px;background:var(--line);border-radius:3px;overflow:hidden;}
+  .sidebar-stats .xp-bar-fill{height:100%;background:var(--gold);transition:width .35s ease;}
+  .sidebar-stats .xp-text{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--muted);white-space:nowrap;}
+
+  /* Main content shift — all views get margin-left = sidebar width.
+     The transition makes it smooth when toggling expanded/collapsed. */
+  .view{
+    margin-left:var(--sidebar-w);
+    transition:margin-left var(--sidebar-transition);
+  }
+  body.sidebar-collapsed .view{ margin-left:var(--sidebar-w-collapsed); }
+  body.no-sidebar .view{ margin-left:0; }
+
+  /* Dark overlay for mobile off-canvas drawer */
+  #sidebar-overlay{
+    position:fixed;inset:0;background:rgba(20,26,49,0.5);z-index:35;
+    opacity:0;pointer-events:none;transition:opacity .25s ease;
+  }
+  body.sidebar-open #sidebar-overlay{opacity:1;pointer-events:auto;}
+
+  /* ---------- Mobile (<768px): sidebar becomes off-canvas drawer ---------- */
+  @media(max-width:768px){
+    .sidebar{
+      transform:translateX(-100%);
+      box-shadow:2px 0 24px rgba(0,0,0,0.15);
+    }
+    body.sidebar-open .sidebar{transform:translateX(0);}
+    /* On mobile, the main content never gets margin-left (the sidebar is
+       off-canvas, not in-flow). */
+    .view, body.sidebar-collapsed .view{margin-left:0;}
+  }
+
+  /* Keep the old .topbar styles around (the element is gone, but the rules
+     are harmless and make it easy to revert if needed). The .brand, .avatar,
+     .link-btn, .xp-chip etc. classes are reused by the sidebar. */
 
   /* ---------- Buttons ---------- */
   .btn{
@@ -148,11 +289,67 @@
   .empty-state{border:1px dashed var(--line);border-radius:16px;padding:44px;text-align:center;color:var(--muted);}
   .empty-state h4{color:var(--ink);margin-bottom:6px;}
 
+  /* ===== Feature 4 — Split dashboard: In Progress / Completed ===== */
+  .courses-section{margin-bottom:36px;}
+  .courses-section .cs-head{
+    display:flex;align-items:center;justify-content:space-between;
+    margin-bottom:14px;cursor:pointer;user-select:none;
+  }
+  .courses-section .cs-head h3{font-size:18px;display:flex;align-items:center;gap:10px;}
+  .courses-section .cs-head .cs-chevron{
+    font-size:11px;color:var(--muted);transition:transform .2s ease;
+    display:inline-block;
+  }
+  .courses-section.collapsed .cs-head .cs-chevron{transform:rotate(-90deg);}
+  .courses-section .cs-count{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);
+    background:var(--paper-2);border:1px solid var(--line);border-radius:999px;padding:3px 10px;
+  }
+  .courses-section .cs-body{transition:max-height .25s ease, opacity .2s ease;overflow:hidden;}
+  .courses-section.collapsed .cs-body{max-height:0 !important;opacity:0;}
+  /* Completed-section accent: a subtle gold left-border on the section header */
+  .courses-section.completed .cs-head h3::before{
+    content:'🏆';font-size:16px;margin-right:2px;
+  }
+  .courses-section.in-progress .cs-head h3::before{
+    content:'📚';font-size:16px;margin-right:2px;
+  }
+  /* Completed card: gold border + a 'Completed' ribbon */
+  .course-card.completed{
+    border-color:var(--gold);background:linear-gradient(135deg,var(--paper-2) 0%,#FFFBF1 100%);
+  }
+  .course-card.completed .cc-completed-badge{
+    display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+    color:#221607;background:var(--gold);border-radius:6px;padding:3px 9px;text-transform:uppercase;letter-spacing:.05em;
+  }
+  .course-card .cc-completed-badge{display:none;}  /* hidden on in-progress cards */
+  .course-card .cc-final-score{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink);
+    background:#FBF3E6;border:1px solid var(--gold);border-radius:6px;padding:2px 8px;
+  }
+  .course-card .cc-final-score .pct{color:var(--muted);font-size:11px;margin-left:4px;}
+  .course-card .cc-view-cert{
+    font-size:12.5px;font-weight:600;color:var(--gold-2);background:none;border:1px solid var(--gold);
+    border-radius:8px;padding:6px 12px;cursor:pointer;transition:background .12s ease;
+  }
+  .course-card .cc-view-cert:hover{background:#FBF3E6;}
+
   /* COURSE VIEW */
   .course-wrap{max-width:1120px;margin:0 auto;padding:32px 28px 80px;}
   .course-head{margin-bottom:26px;}
   .course-head h2{font-size:30px;line-height:1.25;max-width:760px;}
   .course-head p{color:var(--muted);margin-top:8px;max-width:680px;line-height:1.55;}
+  /* Feature 1 — visible lessons-progress bar on the course view (X of Y done) */
+  .course-progress{margin:18px 0 4px;max-width:520px;}
+  .course-progress .cp-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:10px;}
+  .course-progress .cp-label{font-size:12.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+  .course-progress .cp-count{font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:var(--ink);}
+  .course-progress .cp-track{height:8px;background:var(--line);border-radius:5px;overflow:hidden;}
+  .course-progress .cp-fill{height:100%;background:var(--gold);transition:width .35s ease;}
+  .course-progress .cp-fill.done{background:var(--success);}
+  .course-progress .cp-meta{font-size:12px;color:var(--muted);margin-top:6px;}
+  .course-progress .cp-badge{font-size:11px;font-weight:600;color:#221607;background:var(--gold);border-radius:999px;padding:3px 10px;margin-left:8px;}
+  .course-progress .cp-badge.muted{background:var(--line);color:var(--muted);}
   .course-body{display:grid;grid-template-columns:270px 1fr;gap:32px;align-items:start;}
   @media(max-width:800px){.course-body{grid-template-columns:1fr;}}
   .module-rail{position:sticky;top:80px;border:1px solid var(--line);border-radius:14px;background:var(--paper-2);overflow:hidden;}
@@ -276,6 +473,100 @@
   .qh-dates{display:flex;gap:5px;margin-top:4px;flex-wrap:wrap;}
   .qh-date{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--muted);width:14px;text-align:center;overflow:hidden;white-space:nowrap;}
   .qh-hint{font-size:11.5px;color:var(--muted);margin-top:8px;}
+
+  /* ===== Feature 2 — Final quiz (20 marks) ===== */
+  .final-quiz-btn-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 22px;}
+  .final-quiz-btn-row .locked-note{font-size:13px;color:var(--muted);}
+  .final-quiz-btn-row .locked-note strong{color:var(--ink);}
+  .final-quiz-btn-row .best-score-chip{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:#221607;background:var(--gold);
+    border-radius:6px;padding:3px 9px;white-space:nowrap;
+  }
+
+  /* Full-screen modal overlay for both taking and reviewing the final quiz */
+  .fq-modal{
+    position:fixed;inset:0;background:rgba(20,26,49,0.55);z-index:60;
+    display:flex;align-items:flex-start;justify-content:center;padding:24px;
+    overflow-y:auto;
+  }
+  .fq-panel{
+    background:var(--paper-2);border-radius:18px;box-shadow:var(--shadow);
+    width:100%;max-width:880px;margin:auto;display:flex;flex-direction:column;
+    max-height:calc(100vh - 48px);overflow:hidden;
+  }
+  .fq-head{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:18px 24px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--paper-2);z-index:2;
+  }
+  .fq-head h3{font-size:19px;margin:0;}
+  .fq-head .fq-counter{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--muted);}
+  .fq-progress-track{height:5px;background:var(--line);width:100%;}
+  .fq-progress-fill{height:100%;background:var(--gold);transition:width .25s ease;}
+  .fq-body{padding:24px;overflow-y:auto;flex:1;}
+  .fq-q{margin-bottom:22px;padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:#FAFBFE;}
+  .fq-q .fq-q-num{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+  .fq-q .fq-q-topic{font-size:11.5px;color:var(--gold-2);font-weight:600;margin-top:2px;}
+  .fq-q .fq-q-text{font-weight:600;margin:8px 0 12px;font-size:15px;line-height:1.5;}
+  .fq-q .fq-opt{
+    display:flex;align-items:flex-start;gap:10px;padding:10px 12px;margin-bottom:6px;
+    border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:14px;background:var(--paper-2);transition:background .12s ease,border-color .12s ease;
+  }
+  .fq-q .fq-opt:hover{background:#FBF3E6;border-color:var(--gold);}
+  .fq-q .fq-opt.selected{background:#FBF3E6;border-color:var(--gold-2);}
+  .fq-q .fq-opt .fq-opt-letter{
+    width:22px;height:22px;border-radius:50%;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--muted);flex-shrink:0;
+  }
+  .fq-q .fq-opt.selected .fq-opt-letter{background:var(--gold);color:#221607;border-color:var(--gold);}
+  .fq-q .fq-opt input{position:absolute;opacity:0;pointer-events:none;}
+  .fq-q.difficulty-easy{border-left:3px solid #3FA66B;}
+  .fq-q.difficulty-medium{border-left:3px solid #E8A33D;}
+  .fq-q.difficulty-hard{border-left:3px solid #C3492F;}
+  .fq-foot{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:14px 24px;border-top:1px solid var(--line);background:var(--paper-2);
+    position:sticky;bottom:0;flex-wrap:wrap;
+  }
+  .fq-foot .fq-unanswered{font-size:13px;color:var(--muted);}
+  .fq-foot .fq-unanswered.warn{color:var(--danger);font-weight:600;}
+
+  /* Results screen */
+  .fq-result-score{display:flex;align-items:center;gap:24px;flex-wrap:wrap;padding:8px 0 18px;border-bottom:1px solid var(--line);margin-bottom:20px;}
+  .fq-result-score .fq-big-score{font-family:'Fraunces',serif;font-size:54px;font-weight:700;color:var(--ink);line-height:1;}
+  .fq-result-score .fq-big-score .total{color:var(--muted);font-size:30px;font-weight:500;}
+  .fq-result-score .fq-pct{font-family:'IBM Plex Mono',monospace;font-size:18px;color:var(--muted);}
+  .fq-result-badge{
+    display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;
+    font-size:13px;font-weight:700;letter-spacing:.04em;
+  }
+  .fq-result-badge.pass{background:rgba(63,166,107,0.15);color:#236b3e;border:1px solid var(--success);}
+  .fq-result-badge.fail{background:rgba(195,73,47,0.12);color:#9c2f1d;border:1px solid var(--danger);}
+  .fq-result-section{margin-bottom:24px;}
+  .fq-result-section h4{font-family:'Fraunces',serif;font-size:16px;margin:0 0 10px;color:var(--ink);}
+  .fq-topic-bars{display:flex;flex-direction:column;gap:10px;}
+  .fq-topic-bar{display:flex;align-items:center;gap:12px;}
+  .fq-topic-bar .fq-tb-label{flex:0 0 200px;font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .fq-topic-bar .fq-tb-track{flex:1;height:10px;background:var(--line);border-radius:5px;overflow:hidden;}
+  .fq-topic-bar .fq-tb-fill{height:100%;background:var(--gold);transition:width .4s ease;}
+  .fq-topic-bar .fq-tb-fill.pass{background:var(--success);}
+  .fq-topic-bar .fq-tb-fill.weak{background:var(--danger);}
+  .fq-topic-bar .fq-tb-pct{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);width:60px;text-align:right;flex-shrink:0;}
+  .fq-list-item{padding:10px 14px;border:1px solid var(--line);border-radius:9px;margin-bottom:8px;background:#FAFBFE;font-size:13.5px;line-height:1.5;}
+  .fq-list-item .fq-li-topic{font-weight:600;color:var(--gold-2);font-size:12px;text-transform:uppercase;letter-spacing:.04em;}
+  .fq-review-q{padding:14px 16px;border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:#FAFBFE;}
+  .fq-review-q.correct{border-left:3px solid var(--success);}
+  .fq-review-q.incorrect{border-left:3px solid var(--danger);}
+  .fq-review-q.skipped{border-left:3px solid var(--muted);}
+  .fq-review-q .fq-rv-q{font-weight:600;font-size:14px;margin-bottom:8px;}
+  .fq-review-q .fq-rv-ans{font-size:13px;margin-bottom:4px;}
+  .fq-review-q .fq-rv-ans .your{color:var(--danger);}
+  .fq-review-q .fq-rv-ans .correct{color:var(--success);font-weight:600;}
+  .fq-review-q .fq-rv-explain{font-size:12.5px;color:var(--muted);margin-top:8px;font-style:italic;}
+  .fq-actions-row{display:flex;gap:10px;flex-wrap:wrap;padding-top:16px;border-top:1px solid var(--line);}
+  @media(max-width:600px){
+    .fq-topic-bar .fq-tb-label{flex:0 0 120px;font-size:12px;}
+    .fq-result-score .fq-big-score{font-size:42px;}
+  }
 
   /* ===== Flashcards ===== */
   .fc-block{margin-top:26px;padding-top:22px;border-top:1px solid var(--line);}
@@ -452,13 +743,94 @@
   .toast .t-icon{font-size:18px;}
   @keyframes toastIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 
+  /* ===== Feature 3 — Certificate of Completion ===== */
+  /* The certificate itself: rendered as a self-contained card the user can
+     view on screen or print to PDF (landscape A4 via the print rule below).
+     Uses the existing palette + fonts so it matches the rest of the app. */
+  .cert-page{max-width:920px;margin:0 auto;padding:32px 28px 80px;}
+  .cert-card{
+    background:var(--paper-2);border:1px solid var(--line);border-radius:18px;
+    padding:48px 56px;box-shadow:var(--shadow);position:relative;overflow:hidden;
+  }
+  /* Decorative gold corner accents — pure CSS, no images */
+  .cert-card::before, .cert-card::after{
+    content:'';position:absolute;width:120px;height:120px;
+    border:2px solid var(--gold);pointer-events:none;
+  }
+  .cert-card::before{top:14px;left:14px;border-right:none;border-bottom:none;border-radius:18px 0 0 0;}
+  .cert-card::after{bottom:14px;right:14px;border-left:none;border-top:none;border-radius:0 0 18px 0;}
+  .cert-inner{position:relative;z-index:1;text-align:center;}
+  .cert-brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:8px;}
+  .cert-brand .dot{width:9px;height:9px;border-radius:50%;background:var(--gold);box-shadow:0 0 0 4px rgba(232,163,61,0.18);}
+  .cert-brand .name{font-family:'Fraunces',serif;font-weight:600;font-size:18px;color:var(--ink);}
+  .cert-eyebrow{
+    font-size:11px;text-transform:uppercase;letter-spacing:.22em;color:var(--gold-2);
+    font-weight:600;margin:18px 0 8px;
+  }
+  .cert-title{
+    font-family:'Fraunces',serif;font-size:38px;font-weight:700;color:var(--ink);
+    line-height:1.15;margin:0 0 28px;letter-spacing:-0.01em;
+  }
+  .cert-body{font-size:15px;color:var(--muted);line-height:1.7;max-width:560px;margin:0 auto 28px;}
+  .cert-body strong{color:var(--ink);font-weight:600;}
+  .cert-name{
+    font-family:'Fraunces',serif;font-size:30px;font-weight:600;color:var(--ink);
+    margin:24px 0 6px;letter-spacing:-0.01em;
+  }
+  .cert-course{
+    font-family:'Fraunces',serif;font-size:22px;font-weight:500;color:var(--ink-2);
+    font-style:italic;margin:0 0 28px;
+  }
+  .cert-divider{
+    width:60px;height:2px;background:var(--gold);margin:24px auto;
+  }
+  .cert-stats{
+    display:flex;align-items:center;justify-content:center;gap:32px;flex-wrap:wrap;
+    margin:24px 0 28px;font-size:13px;color:var(--muted);
+  }
+  .cert-stat .label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:10.5px;font-weight:600;margin-bottom:4px;}
+  .cert-stat .value{font-family:'IBM Plex Mono',monospace;font-size:16px;color:var(--ink);font-weight:600;}
+  .cert-code{
+    font-family:'IBM Plex Mono',monospace;font-size:14px;color:var(--ink);
+    background:#FBF3E6;border:1px solid var(--gold);border-radius:8px;
+    padding:8px 14px;display:inline-block;margin-top:8px;letter-spacing:.06em;
+  }
+  .cert-actions{
+    display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;
+    margin-top:32px;
+  }
+  .cert-back-link{
+    display:inline-block;margin:24px 0 0;font-size:14px;color:var(--muted);
+    text-decoration:none;border-bottom:1px solid transparent;
+  }
+  .cert-back-link:hover{color:var(--ink);border-color:var(--line);}
+
+  /* Certificates list page */
+  .cert-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px;}
+  .cert-list-card{
+    background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:22px;
+    display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow);transition:transform .15s ease;
+  }
+  .cert-list-card:hover{transform:translateY(-2px);}
+  .cert-list-card .clc-eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--gold-2);font-weight:600;}
+  .cert-list-card .clc-course{font-family:'Fraunces',serif;font-size:18px;font-weight:600;color:var(--ink);line-height:1.3;}
+  .cert-list-card .clc-stats{display:flex;gap:14px;font-size:12.5px;color:var(--muted);flex-wrap:wrap;}
+  .cert-list-card .clc-stats .mono{font-family:'IBM Plex Mono',monospace;color:var(--ink);}
+  .cert-list-card .clc-code{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);background:#FAFBFE;padding:6px 10px;border-radius:6px;border:1px solid var(--line);align-self:flex-start;}
+  .cert-list-card .clc-actions{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;}
+
+  /* Print: certificate-only, landscape A4. The existing #print-area rule
+     handles the course print feature; this adds a parallel #cert-print-area
+     path for certificates. Only ONE of the two is visible at a time. */
   @media print{
     body *{visibility:hidden;}
-    #print-area, #print-area *{visibility:visible;}
+    #print-area, #print-area *,
+    #cert-print-area, #cert-print-area *{visibility:visible;}
     #print-area{display:block !important;position:absolute;top:0;left:0;width:100%;padding:24px;}
-    #print-area h1{font-family:'Fraunces',serif;font-size:26px;margin-bottom:6px;}
-    #print-area .print-desc{color:var(--muted);margin-bottom:22px;}
-    #print-area h2{font-family:'Fraunces',serif;font-size:18px;margin:22px 0 8px;}
+    #cert-print-area{display:block !important;position:absolute;top:0;left:0;width:100%;padding:0;}
+    #cert-print-area .cert-card{box-shadow:none;border:2px solid var(--ink);margin:0;padding:60px;}
+    /* Landscape A4 so the certificate has room */
+    @page{size:A4 landscape;margin:12mm;}
   }
 </style>
 </head>
@@ -466,27 +838,67 @@
 
 <div id="app">
 
-  <header id="topbar" class="topbar hidden">
-    <div class="brand"><span class="dot"></span>Synapse</div>
-    <div class="topbar-right">
-      <button class="link-btn" id="nav-dashboard">Dashboard</button>
-      <button class="link-btn" id="nav-leaderboard">Leaderboard</button>
-      <button class="link-btn" id="theme-toggle" title="Switch theme">🌙</button>
-      <div class="streak-chip" id="streak-chip" title="Daily learning streak">
-        <span class="flame">🔥</span><span id="streak-count">0</span>
-      </div>
-      <div class="xp-chip" id="xp-chip" title="Experience points">
-        <span class="level-badge" id="level-badge">L0</span>
-        <div class="xp-bar"><div class="xp-bar-fill" id="xp-bar-fill"></div></div>
-        <span class="xp-text" id="xp-text">0 XP</span>
-      </div>
-      <div class="user-chip">
-        <div class="avatar" id="avatar-init">?</div>
-        <span id="user-name" class="mono" style="font-size:13px;color:var(--muted);"></span>
-      </div>
-      <button class="link-btn" id="btn-signout">Sign out</button>
+  <!-- Feature 5 — Collapsible left sidebar menu (replaces the old topbar).
+       All element IDs the existing JS depends on are preserved here, just on
+       new sidebar elements. The sidebar is hidden by default (.hidden) and
+       shown by enterApp() after the user signs in. Auth + shared views keep
+       it hidden via body.no-sidebar. -->
+  <aside id="sidebar" class="sidebar hidden" aria-label="Main navigation">
+    <div class="sidebar-header">
+      <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="true" aria-controls="sidebar" title="Collapse/expand sidebar">
+        <svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <span class="sidebar-brand"><span class="dot"></span>Synapse</span>
     </div>
-  </header>
+
+    <nav class="sidebar-nav">
+      <button class="nav-item active" id="nav-dashboard" data-view="dashboard" title="Dashboard" aria-current="page">
+        <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span class="nav-label">Dashboard</span>
+      </button>
+      <button class="nav-item" id="nav-certificates" data-view="certificates" title="Certificates">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+        <span class="nav-label">Certificates</span>
+      </button>
+      <button class="nav-item" id="nav-leaderboard" data-view="leaderboard" title="Leaderboard">
+        <svg viewBox="0 0 24 24"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+        <span class="nav-label">Leaderboard</span>
+      </button>
+    </nav>
+
+    <!-- Mini XP/streak bar (expanded mode only) — reuses the same element IDs
+         the existing updateHeaderStats() writes to, so both stay in sync. -->
+    <div class="sidebar-stats" id="sidebar-stats">
+      <span class="level-badge" id="level-badge">L0</span>
+      <div class="xp-bar"><div class="xp-bar-fill" id="xp-bar-fill"></div></div>
+      <span class="xp-text" id="xp-text">0 XP</span>
+    </div>
+    <div class="streak-chip" id="streak-chip" title="Daily learning streak" style="padding:0 14px 8px;justify-content:flex-start;">
+      <span class="flame">🔥</span><span id="streak-count">0</span>
+      <span style="font-size:10.5px;color:var(--muted);margin-left:4px;">day streak</span>
+    </div>
+
+    <div class="sidebar-footer">
+      <button class="nav-item" id="theme-toggle" title="Switch theme">
+        <svg viewBox="0 0 24 24" id="theme-toggle-icon"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <span class="nav-label" id="theme-toggle-label">Theme</span>
+      </button>
+      <div class="sidebar-user">
+        <div class="avatar" id="avatar-init">?</div>
+        <div class="user-meta">
+          <span class="username" id="user-name">user</span>
+          <span class="user-stats mono">@<span id="user-name-2">user</span></span>
+        </div>
+      </div>
+      <button class="nav-item" id="btn-signout" title="Sign out">
+        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span class="nav-label">Sign out</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Dark overlay for mobile off-canvas drawer -->
+  <div id="sidebar-overlay"></div>
 
   <!-- AUTH VIEW -->
   <section id="view-auth" class="view auth-view">
@@ -544,11 +956,40 @@
         <h3>Your courses</h3>
         <span class="count-badge" id="course-count">0 courses</span>
       </div>
-      <div id="course-grid" class="course-grid"></div>
-      <div id="empty-state" class="empty-state hidden">
+
+      <!-- Feature 4 — split into In Progress / Completed sections -->
+      <div id="courses-empty-all" class="empty-state hidden">
         <h4>No courses yet</h4>
         <p>Type a topic above and Synapse will put a full course together for you.</p>
       </div>
+
+      <section class="courses-section in-progress" id="section-in-progress">
+        <div class="cs-head" id="cs-head-in-progress">
+          <h3>In Progress <span class="cs-chevron">▼</span></h3>
+          <span class="cs-count" id="in-progress-count">0</span>
+        </div>
+        <div class="cs-body">
+          <div id="grid-in-progress" class="course-grid"></div>
+          <div id="empty-in-progress" class="empty-state hidden">
+            <h4>No courses in progress</h4>
+            <p>Generate a course above to start learning, or revisit a completed course from below.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="courses-section completed" id="section-completed">
+        <div class="cs-head" id="cs-head-completed">
+          <h3>Completed <span class="cs-chevron">▼</span></h3>
+          <span class="cs-count" id="completed-count">0</span>
+        </div>
+        <div class="cs-body">
+          <div id="grid-completed" class="course-grid"></div>
+          <div id="empty-completed" class="empty-state hidden">
+            <h4>No completed courses yet</h4>
+            <p>Keep learning! Complete every lesson and pass the final quiz to earn a certificate.</p>
+          </div>
+        </div>
+      </section>
 
       <div class="section-head">
         <h3>Achievements</h3>
@@ -574,6 +1015,17 @@
           <button class="btn btn-ghost btn-sm" id="cancel-course-edit">Cancel</button>
         </div>
       </div>
+      <!-- Feature 1 — visible X-of-Y lessons progress bar on the course view -->
+      <div class="course-progress" id="course-progress">
+        <div class="cp-row">
+          <span class="cp-label">Course progress</span>
+          <span class="cp-count" id="cp-count">0 / 0 lessons</span>
+        </div>
+        <div class="cp-track"><div class="cp-fill" id="cp-fill" style="width:0%"></div></div>
+        <div class="cp-meta" id="cp-meta"></div>
+      </div>
+      <!-- Feature 2 — Final Quiz button row (gated until all lessons done) -->
+      <div class="final-quiz-btn-row" id="final-quiz-btn-row"></div>
       <div class="course-actions-row">
         <button class="btn btn-ghost btn-sm" id="toggle-course-edit">Edit course</button>
         <button class="btn btn-ghost btn-sm" id="show-mindmap">🧠 Mind map</button>
@@ -602,6 +1054,22 @@
     </div>
   </div>
 
+  <!-- Feature 2 — Final quiz modal (taking + results) -->
+  <div id="fq-modal" class="fq-modal hidden">
+    <div class="fq-panel" role="dialog" aria-modal="true" aria-labelledby="fq-title">
+      <div class="fq-head">
+        <h3 id="fq-title">Final quiz</h3>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <span class="fq-counter" id="fq-counter"></span>
+          <button class="btn btn-ghost btn-sm" id="fq-close">✕ Close</button>
+        </div>
+      </div>
+      <div class="fq-progress-track"><div class="fq-progress-fill" id="fq-progress-fill" style="width:0%"></div></div>
+      <div class="fq-body" id="fq-body"></div>
+      <div class="fq-foot" id="fq-foot"></div>
+    </div>
+  </div>
+
   <div id="toast-wrap" class="toast-wrap"></div>
 
 </div>
@@ -615,6 +1083,30 @@
       <span class="count-badge">top 10 learners</span>
     </div>
     <div id="leaderboard-list"></div>
+  </div>
+</section>
+
+<!-- CERTIFICATES LIST VIEW (Feature 3) -->
+<section id="view-certificates" class="view hidden">
+  <div class="dash-wrap" style="max-width:1080px;">
+    <button class="link-btn" id="back-to-dash-certs" style="margin-bottom:18px;">← Back to dashboard</button>
+    <div class="section-head">
+      <h3>Your certificates</h3>
+      <span class="count-badge" id="cert-count">0 earned</span>
+    </div>
+    <div id="cert-list" class="cert-list"></div>
+    <div id="cert-empty" class="empty-state hidden">
+      <h4>No certificates yet</h4>
+      <p>Complete a course (all lessons + pass the final quiz) to earn your first certificate.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CERTIFICATE DETAIL VIEW (Feature 3) — what prints to PDF -->
+<section id="view-certificate" class="view hidden">
+  <div class="cert-page">
+    <button class="link-btn" id="cert-back-to-list" style="margin-bottom:18px;">← Back to certificates</button>
+    <div id="cert-print-area"><!-- the .cert-card is rendered here --></div>
   </div>
 </section>
 
@@ -691,10 +1183,21 @@ const el = (id) => document.getElementById(id);
 
 /* ---------------- View switching ---------------- */
 function showView(name){
-  ['auth','dashboard','course','leaderboard','shared'].forEach(v=>{
+  ['auth','dashboard','course','leaderboard','shared','certificates','certificate'].forEach(v=>{
     el('view-'+v).classList.toggle('hidden', v!==name);
   });
-  el('topbar').classList.toggle('hidden', name==='auth' || name==='shared');
+  // Feature 5 — sidebar hidden on auth + shared (visitor mode). Visible
+  // everywhere else. body.no-sidebar also removes the main content's
+  // margin-left so auth/shared go full-width.
+  const noSidebar = (name==='auth' || name==='shared');
+  el('sidebar').classList.toggle('hidden', noSidebar);
+  document.body.classList.toggle('no-sidebar', noSidebar);
+  // On mobile, navigating to a new view should also close the drawer.
+  closeSidebarDrawer();
+  // Highlight the active nav item. Some views map to a nav button (dashboard,
+  // certificates, leaderboard); course + certificate views stay on whatever
+  // was active before (they're sub-views, not top-level destinations).
+  setActiveNavItem(name);
 }
 
 /* ---------------- Constellation loader ---------------- */
@@ -763,9 +1266,13 @@ el('btn-signout').addEventListener('click', ()=>{
 /* ---------------- Enter app / load courses ---------------- */
 async function enterApp(){
   el('user-name').textContent = currentUser;
+  // Feature 5 — also write the username into the secondary user-stats span.
+  const un2 = el('user-name-2'); if(un2) un2.textContent = currentUser;
   el('avatar-init').textContent = currentUser.slice(0,1).toUpperCase();
-  el('topbar').classList.remove('hidden');
-  refreshMe();          // engagement: header XP bar / streak / badges
+  // Feature 5 — show the sidebar (it was hidden by default). showView()
+  // manages body.no-sidebar + active nav item.
+  el('sidebar').classList.remove('hidden');
+  refreshMe();          // engagement: sidebar XP bar / streak / badges
   renderBadges();       // immediate locked-state render; refreshMe updates it
   await loadCourses();
   renderCourseGrid();
@@ -780,10 +1287,21 @@ function currentTheme(){
 }
 
 function applyThemeButton(){
+  // Feature 5 — the theme toggle is now an SVG nav-item, not a text emoji.
+  // Swap the icon path + label text + title based on the current theme.
   const btn = el('theme-toggle');
   if(!btn) return;
-  btn.textContent = currentTheme() === 'dark' ? '☀️' : '🌙';
-  btn.title = currentTheme() === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+  const isDark = currentTheme() === 'dark';
+  const icon = el('theme-toggle-icon');
+  if(icon){
+    // Sun icon for dark mode (click to switch to light); moon for light mode.
+    icon.innerHTML = isDark
+      ? '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>'
+      : '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>';
+  }
+  const label = el('theme-toggle-label');
+  if(label){ label.textContent = isDark ? 'Light mode' : 'Dark mode'; }
+  btn.title = isDark ? 'Switch to light mode' : 'Switch to dark mode';
 }
 
 function toggleTheme(){
@@ -800,6 +1318,106 @@ function toggleTheme(){
 
 el('theme-toggle').addEventListener('click', toggleTheme);
 applyThemeButton();
+
+/* ---------------- Feature 5 — Sidebar toggle / drawer / active item ---------------- */
+const SIDEBAR_COLLAPSED_KEY = 'synapse_sidebar_collapsed';
+
+function isMobile(){
+  return window.matchMedia('(max-width: 768px)').matches;
+}
+
+function applySidebarState(){
+  // Sync body class + aria-expanded with the stored state. Called on init
+  // and after each toggle. The early <script> in <head> already applied the
+  // class before first paint; this keeps the toggle button's aria in sync.
+  const collapsed = document.body.classList.contains('sidebar-collapsed');
+  const toggle = el('sidebar-toggle');
+  if(toggle){
+    toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+}
+
+function toggleSidebar(){
+  // Desktop only: toggle expanded/collapsed. Persists in localStorage.
+  // On mobile, the hamburger opens the off-canvas drawer instead (see
+  // openSidebarDrawer / closeSidebarDrawer).
+  if(isMobile()){
+    openSidebarDrawer();
+    return;
+  }
+  const collapsed = document.body.classList.toggle('sidebar-collapsed');
+  try{ localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0'); }catch(e){}
+  applySidebarState();
+}
+
+function openSidebarDrawer(){
+  // Mobile: slide the sidebar in over the content + show the dark overlay.
+  document.body.classList.add('sidebar-open');
+  const toggle = el('sidebar-toggle');
+  if(toggle) toggle.setAttribute('aria-expanded', 'true');
+}
+
+function closeSidebarDrawer(){
+  // Mobile: slide the sidebar back out + hide the overlay. Safe to call on
+  // desktop too (no-op there since the class is never added on desktop).
+  document.body.classList.remove('sidebar-open');
+  const toggle = el('sidebar-toggle');
+  // Restore aria-expanded to reflect the desktop collapsed/expanded state.
+  if(toggle && !isMobile()){
+    toggle.setAttribute('aria-expanded', document.body.classList.contains('sidebar-collapsed') ? 'false' : 'true');
+  }
+}
+
+/* Map view names to the nav button that should be highlighted. The course
+   view is a sub-view of dashboard (you opened a course from the dashboard),
+   so it keeps Dashboard active. The certificate detail view is a sub-view
+   of certificates, so it keeps Certificates active. */
+function viewToNavId(view){
+  if(view === 'course') return 'nav-dashboard';
+  if(view === 'certificate') return 'nav-certificates';
+  if(view === 'dashboard') return 'nav-dashboard';
+  if(view === 'leaderboard') return 'nav-leaderboard';
+  if(view === 'certificates') return 'nav-certificates';
+  return null;  // auth + shared have no sidebar
+}
+
+function setActiveNavItem(view){
+  const navId = viewToNavId(view);
+  if(!navId) return;
+  document.querySelectorAll('.sidebar-nav .nav-item').forEach(item=>{
+    const isActive = item.id === navId;
+    item.classList.toggle('active', isActive);
+    if(isActive) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
+}
+
+// Wire up the toggle button
+el('sidebar-toggle').addEventListener('click', toggleSidebar);
+
+// Wire up the overlay: clicking it closes the mobile drawer
+el('sidebar-overlay').addEventListener('click', closeSidebarDrawer);
+
+// On mobile, clicking any nav item also closes the drawer (so navigation
+// feels snappy). The nav items' own click handlers (registered below) still
+// fire; this just removes the drawer.
+document.querySelectorAll('.sidebar-nav .nav-item').forEach(item=>{
+  item.addEventListener('click', ()=>{
+    if(isMobile()) closeSidebarDrawer();
+  });
+});
+
+// Close the mobile drawer on Escape (keyboard accessibility)
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && document.body.classList.contains('sidebar-open')){
+    closeSidebarDrawer();
+  }
+});
+
+// Restore the stored collapsed state + sync aria. The early <script> in
+// <head> already applied the body class before first paint to avoid a flash;
+// this just makes sure the toggle button's aria-expanded matches.
+applySidebarState();
 
 /* ---------------- Completion micro-animations (Feature 15) ---------------- */
 const CONFETTI_COLORS = ['#E8A33D', '#F2B65C', '#3FA66B', '#FFFFFF'];
@@ -932,6 +1550,223 @@ el('back-to-dash').addEventListener('click', async ()=>{ refreshMe(); await load
 el('nav-leaderboard').addEventListener('click', openLeaderboard);
 el('back-to-dash-2').addEventListener('click', async ()=>{ refreshMe(); await loadCourses(); renderCourseGrid(); showView('dashboard'); });
 
+/* ---------------- Certificates (Feature 3) ---------------- */
+el('nav-certificates').addEventListener('click', openCertificates);
+el('back-to-dash-certs').addEventListener('click', async ()=>{ refreshMe(); await loadCourses(); renderCourseGrid(); showView('dashboard'); });
+el('cert-back-to-list').addEventListener('click', openCertificates);
+
+async function openCertificates(){
+  showView('certificates');
+  const list = el('cert-list');
+  const empty = el('cert-empty');
+  list.innerHTML = '';
+  empty.classList.add('hidden');
+  try{
+    const certs = await api('/certificates');
+    el('cert-count').textContent = certs.length + (certs.length===1 ? ' earned' : ' earned');
+    if(!certs.length){
+      empty.classList.remove('hidden');
+      return;
+    }
+    certs.forEach(cert=>{
+      const card = document.createElement('div');
+      card.className = 'cert-list-card';
+      const d = cert.issued_at ? new Date(cert.issued_at) : null;
+      const when = d && !isNaN(d) ? d.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'}) : '';
+      card.innerHTML = `
+        <span class="clc-eyebrow">🏆 Certificate of Completion</span>
+        <div class="clc-course">${escapeHTML(cert.course_title || 'Course')}</div>
+        <div class="clc-stats">
+          <span>Score: <span class="mono">${cert.score}/${cert.total}</span></span>
+          <span>${cert.percentage}%</span>
+          <span>${escapeHTML(when)}</span>
+        </div>
+        <span class="clc-code">${escapeHTML(cert.certificate_code)}</span>
+        <div class="clc-actions">
+          <button class="btn btn-primary btn-sm" data-view="${cert.course_id}">View / Download</button>
+          <button class="btn btn-ghost btn-sm" data-open-course="${cert.course_id}">Open course</button>
+        </div>
+      `;
+      list.appendChild(card);
+    });
+    list.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click', ()=>openCertificate(b.dataset.view)));
+    list.querySelectorAll('[data-open-course]').forEach(b=>b.addEventListener('click', ()=>openCourse(b.dataset.openCourse)));
+  }catch(err){
+    list.innerHTML = `<div class="form-error">Could not load certificates: ${escapeHTML(err.message)}</div>`;
+  }
+}
+
+/* Open the certificate detail view for a course. Issues the certificate
+   on first request (POST), then renders it. */
+async function openCertificate(courseId){
+  showView('certificate');
+  const holder = el('cert-print-area');
+  holder.innerHTML = '<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Loading your certificate…</div>';
+  try{
+    // POST issues (or returns the existing) certificate. The backend gates
+    // this on is_course_completed(), so a 403 here means the user somehow
+    // navigated here without finishing — show a friendly message.
+    const cert = await api('/courses/' + courseId + '/certificate', { method:'POST' });
+    holder.innerHTML = renderCertificateCard(cert);
+    el('cert-print-btn').addEventListener('click', printCertificate);
+    el('cert-png-btn').addEventListener('click', ()=>downloadCertAsPNG(cert));
+    el('cert-back-to-course-btn').addEventListener('click', ()=>{
+      closeFinalQuiz();
+      openCourse(courseId);
+    });
+  }catch(err){
+    if(err.message && err.message.includes('Complete all lessons')){
+      holder.innerHTML = `<div class="empty-state"><h4>Not yet</h4><p>${escapeHTML(err.message)}</p>
+        <button class="btn btn-primary btn-sm" id="cert-back-to-course-from-locked" style="margin-top:12px;">← Back to course</button></div>`;
+      el('cert-back-to-course-from-locked').addEventListener('click', ()=>openCourse(courseId));
+    } else {
+      holder.innerHTML = `<div class="form-error">Could not load the certificate: ${escapeHTML(err.message)}</div>`;
+    }
+  }
+}
+
+function renderCertificateCard(cert){
+  const d = cert.issued_at ? new Date(cert.issued_at) : null;
+  const when = d && !isNaN(d)
+    ? d.toLocaleDateString(undefined, {year:'numeric', month:'long', day:'numeric'})
+    : '';
+  return `
+    <div class="cert-card">
+      <div class="cert-inner">
+        <div class="cert-brand">
+          <span class="dot"></span>
+          <span class="name">Synapse</span>
+        </div>
+        <div class="cert-eyebrow">Certificate of Completion</div>
+        <h1 class="cert-title">This is to certify that</h1>
+        <div class="cert-name">${escapeHTML(cert.username || 'Learner')}</div>
+        <p class="cert-body">has successfully completed the course</p>
+        <div class="cert-course">${escapeHTML(cert.course_title || '')}</div>
+        <div class="cert-divider"></div>
+        <div class="cert-stats">
+          <div class="cert-stat">
+            <span class="label">Final quiz score</span>
+            <span class="value">${cert.score}/${cert.total}</span>
+          </div>
+          <div class="cert-stat">
+            <span class="label">Percentage</span>
+            <span class="value">${cert.percentage}%</span>
+          </div>
+          <div class="cert-stat">
+            <span class="label">Date issued</span>
+            <span class="value">${escapeHTML(when)}</span>
+          </div>
+        </div>
+        <div class="cert-actions">
+          <button class="btn btn-ghost btn-sm" id="cert-print-btn">🖨 Download as PDF</button>
+          <button class="btn btn-ghost btn-sm" id="cert-png-btn">🖼 Download as PNG</button>
+          <button class="btn btn-ghost btn-sm" id="cert-back-to-course-btn">← Back to course</button>
+        </div>
+        <div style="margin-top:32px;">
+          <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:6px;">Certificate ID</div>
+          <span class="cert-code">${escapeHTML(cert.certificate_code)}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* Print the certificate via the browser's print dialog. The @media print rule
+   in <style> hides everything except #cert-print-area and sets landscape A4. */
+function printCertificate(){
+  window.print();
+}
+
+/* Download the certificate as a PNG using the native Canvas API — no
+   external libraries. We render a simplified, self-contained version of the
+   certificate onto a 1200x850 canvas (landscape, ~A4 ratio). This is a
+   fallback for users who can't use the print dialog; the PDF (via print) is
+   the primary path and produces a higher-fidelity result. */
+function downloadCertAsPNG(cert){
+  try{
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200; canvas.height = 850;
+    const ctx = canvas.getContext('2d');
+    if(!ctx){ alert('Your browser does not support canvas PNG export.'); return; }
+    // Background
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Border
+    ctx.strokeStyle = '#1B2340';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
+    // Inner gold border
+    ctx.strokeStyle = '#E8A33D';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+
+    const cx = canvas.width / 2;
+    // Eyebrow
+    ctx.fillStyle = '#C97C1F';
+    ctx.font = '600 16px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('CERTIFICATE OF COMPLETION', cx, 130);
+    // Title
+    ctx.fillStyle = '#1B2340';
+    ctx.font = '600 36px "Fraunces", serif';
+    ctx.fillText('Synapse', cx, 180);
+    // "This is to certify that"
+    ctx.fillStyle = '#5B6488';
+    ctx.font = '400 18px Inter, sans-serif';
+    ctx.fillText('This is to certify that', cx, 260);
+    // Name
+    ctx.fillStyle = '#1B2340';
+    ctx.font = '600 44px "Fraunces", serif';
+    ctx.fillText(cert.username || 'Learner', cx, 320);
+    // "has completed"
+    ctx.fillStyle = '#5B6488';
+    ctx.font = '400 18px Inter, sans-serif';
+    ctx.fillText('has successfully completed the course', cx, 370);
+    // Course title (wrap if long)
+    ctx.fillStyle = '#2A3363';
+    ctx.font = 'italic 500 28px "Fraunces", serif';
+    const title = cert.course_title || '';
+    if(title.length > 60){
+      const mid = title.lastIndexOf(' ', 60);
+      ctx.fillText(title.slice(0, mid > 0 ? mid : 60), cx, 420);
+      ctx.fillText(title.slice(mid > 0 ? mid + 1 : 60), cx, 460);
+    } else {
+      ctx.fillText(title, cx, 420);
+    }
+    // Stats row
+    ctx.fillStyle = '#1B2340';
+    ctx.font = '600 22px "IBM Plex Mono", monospace';
+    ctx.fillText(`${cert.score}/${cert.total}  ·  ${cert.percentage}%`, cx, 560);
+    // Date
+    ctx.fillStyle = '#5B6488';
+    ctx.font = '400 16px Inter, sans-serif';
+    const d = cert.issued_at ? new Date(cert.issued_at) : null;
+    const when = d && !isNaN(d) ? d.toLocaleDateString(undefined, {year:'numeric', month:'long', day:'numeric'}) : '';
+    ctx.fillText('Issued ' + when, cx, 620);
+    // Certificate code
+    ctx.fillStyle = '#C97C1F';
+    ctx.font = '600 18px "IBM Plex Mono", monospace';
+    ctx.fillText(cert.certificate_code, cx, 720);
+    // Footer
+    ctx.fillStyle = '#5B6488';
+    ctx.font = '400 12px Inter, sans-serif';
+    ctx.fillText('Synapse — AI Learning Studio', cx, 780);
+
+    // Trigger download
+    canvas.toBlob((blob)=>{
+      if(!blob){ alert('Could not generate the PNG.'); return; }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'synapse-certificate-' + cert.certificate_code + '.png';
+      a.click();
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  }catch(e){
+    alert('Could not generate the PNG: ' + e.message);
+  }
+}
+
 async function openLeaderboard(){
   showView('leaderboard');
   const holder = el('leaderboard-list');
@@ -961,22 +1796,101 @@ async function openLeaderboard(){
 }
 
 /* ---------------- Dashboard rendering ---------------- */
+/* Feature 4 — split the dashboard into two sections:
+   - "In Progress": is_completed === false, sorted by most-recently-opened first
+     (tracked client-side in localStorage; falls back to created_at desc)
+   - "Completed": is_completed === true, sorted by completion date (the
+     certificate's issued_at) most-recent first
+   Each section has a count badge, a collapsible body, and its own empty state.
+   The course-card now shows the final score + a "View Certificate" button on
+   completed courses. Existing fields (id, title, description, lesson_count,
+   completed_count, created_at) are all still rendered; only the layout changed. */
+
+const LAST_OPENED_KEY = 'synapse_last_opened';  // { courseId: epochMs }
+
+function getLastOpened(){
+  try{ return JSON.parse(localStorage.getItem(LAST_OPENED_KEY) || '{}'); }
+  catch(e){ return {}; }
+}
+
+function recordCourseOpened(courseId){
+  try{
+    const m = getLastOpened();
+    m[String(courseId)] = Date.now();
+    localStorage.setItem(LAST_OPENED_KEY, JSON.stringify(m));
+  }catch(e){ /* private mode — sorting falls back to created_at */ }
+}
+
 function renderCourseGrid(){
-  el('course-count').textContent = coursesSummary.length + (coursesSummary.length===1 ? ' course' : ' courses');
-  const grid = el('course-grid');
+  const total = coursesSummary.length;
+  el('course-count').textContent = total + (total===1 ? ' course' : ' courses');
+
+  // Show the "no courses at all" empty state only when the user has zero courses.
+  el('courses-empty-all').classList.toggle('hidden', total > 0);
+
+  // Split into the two buckets
+  const inProgress = coursesSummary.filter(c => !c.is_completed);
+  const completed = coursesSummary.filter(c => c.is_completed);
+
+  // Sort: in-progress by most-recently-opened first (fallback: created_at desc);
+  // completed by created_at desc as a proxy for completion recency (the
+  // certificate's issued_at isn't in the summary payload — we'd need an extra
+  // round-trip to fetch it, and created_at-desc is a good enough default since
+  // users typically complete courses in roughly the order they started them).
+  const lastOpened = getLastOpened();
+  inProgress.sort((a, b)=>{
+    const ta = lastOpened[String(a.id)] || new Date(a.created_at).getTime() || 0;
+    const tb = lastOpened[String(b.id)] || new Date(b.created_at).getTime() || 0;
+    return tb - ta;
+  });
+  completed.sort((a, b)=>{
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
+  // Render counts
+  el('in-progress-count').textContent = inProgress.length + (inProgress.length===1 ? ' course' : ' courses');
+  el('completed-count').textContent = completed.length + (completed.length===1 ? ' course' : ' courses');
+
+  // Render each section
+  renderCourseSection('in-progress', inProgress, false);
+  renderCourseSection('completed', completed, true);
+}
+
+function renderCourseSection(sectionKey, courses, isCompletedSection){
+  const grid = el('grid-' + sectionKey);
+  const empty = el('empty-' + sectionKey);
   grid.innerHTML = '';
-  el('empty-state').classList.toggle('hidden', coursesSummary.length>0);
-  coursesSummary.forEach(course=>{
+  empty.classList.toggle('hidden', courses.length > 0);
+  courses.forEach(course=>{
     const pct = course.lesson_count ? Math.round((course.completed_count/course.lesson_count)*100) : 0;
     const card = document.createElement('div');
-    card.className = 'course-card';
+    card.className = 'course-card' + (course.is_completed ? ' completed' : '');
+
+    // Feature 4 — completed cards show the final score + a View Certificate button
+    // instead of just the progress bar.
+    let footerExtras = '';
+    if(course.is_completed){
+      const score = course.final_score != null ? course.final_score : '?';
+      const total = 20;  // FINAL_QUIZ_TOTAL
+      const pctScore = (course.final_score != null && total)
+        ? Math.round(course.final_score / total * 100) : 0;
+      footerExtras = `
+        <span class="cc-final-score" title="Best final-quiz score">🏆 ${score}/${total}<span class="pct">· ${pctScore}%</span></span>
+        <button class="cc-view-cert" data-cert="${course.id}">View Certificate</button>
+      `;
+    }
+
     card.innerHTML = `
-      <h4>${escapeHTML(course.title)}</h4>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+        <h4 style="flex:1;">${escapeHTML(course.title)}</h4>
+        <span class="cc-completed-badge">✓ Done</span>
+      </div>
       <p>${escapeHTML(course.description||'')}</p>
-      <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="progress-track"><div class="progress-fill${course.is_completed ? '' : ''}" style="width:${pct}%"></div></div>
       <div class="card-footer">
         <span class="count-badge">${course.lesson_count} lessons · ${pct}%</span>
-        <div style="display:flex;gap:10px;align-items:center;">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          ${footerExtras}
           <button class="icon-btn" data-del="${course.id}">Remove</button>
           <button class="btn btn-sm btn-ghost" data-open="${course.id}">Open →</button>
         </div>
@@ -984,7 +1898,12 @@ function renderCourseGrid(){
     `;
     grid.appendChild(card);
   });
-  grid.querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click', ()=>openCourse(b.dataset.open)));
+
+  // Wire up the buttons (data-open, data-del, data-cert)
+  grid.querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click', ()=>{
+    recordCourseOpened(b.dataset.open);
+    openCourse(b.dataset.open);
+  }));
   grid.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click', async ()=>{
     try{
       await api('/courses/'+b.dataset.del, { method:'DELETE' });
@@ -992,7 +1911,28 @@ function renderCourseGrid(){
       renderCourseGrid();
     }catch(err){ alert('Could not remove that course: ' + err.message); }
   }));
+  grid.querySelectorAll('[data-cert]').forEach(b=>b.addEventListener('click', ()=>{
+    openCertificate(b.dataset.cert);
+  }));
 }
+
+/* Collapsible sections — click the header to toggle. State persisted in
+   localStorage so the user's preference survives a refresh. */
+function setupSectionToggle(sectionKey){
+  const section = el('section-' + sectionKey);
+  const head = el('cs-head-' + sectionKey);
+  if(!section || !head) return;
+  const storageKey = 'synapse_section_collapsed_' + sectionKey;
+  let collapsed = false;
+  try{ collapsed = localStorage.getItem(storageKey) === '1'; }catch(e){}
+  section.classList.toggle('collapsed', collapsed);
+  head.addEventListener('click', ()=>{
+    const now = section.classList.toggle('collapsed');
+    try{ localStorage.setItem(storageKey, now ? '1' : '0'); }catch(e){}
+  });
+}
+setupSectionToggle('in-progress');
+setupSectionToggle('completed');
 
 function escapeHTML(str){
   const d = document.createElement('div');
@@ -1054,6 +1994,9 @@ async function openCourse(id){
     alert('Could not open that course: ' + err.message);
     return;
   }
+  // Feature 4 — record that this course was just opened so the In Progress
+  // section sorts it to the top on the next dashboard render.
+  recordCourseOpened(id);
   activeModuleIndex = 0;
   moduleEditing = false;
   addingLesson = false;
@@ -1071,9 +2014,421 @@ function renderCourseView(){
   el('course-title').textContent = course.title;
   el('course-desc').textContent = course.description || '';
 
+  // Feature 1 — render the X-of-Y lessons progress bar. The bar lives in the
+  // course view header so it's always visible while browsing lessons. The
+  // fill turns green when every lesson is done.
+  renderCourseProgress(course);
+
   renderModuleRail(course);
   renderModuleMain(course);
 }
+
+/* Feature 1 — visible "X of Y lessons done" progress bar on the course view.
+   Reads only from activeCourse.modules (the same data the lesson rail uses),
+   so no extra API call is needed. Updates instantly whenever a lesson is
+   toggled complete because toggleComplete() re-runs renderCourseView(). */
+function renderCourseProgress(course){
+  const mods = (course && course.modules) || [];
+  const total = mods.length;
+  const done = mods.filter(m=>m.completed).length;
+  const pct = total ? Math.round((done/total)*100) : 0;
+  const allDone = total > 0 && done === total;
+  el('cp-count').textContent = done + ' / ' + total + (total===1 ? ' lesson' : ' lessons') + ' · ' + pct + '%';
+  const fill = el('cp-fill');
+  fill.style.width = pct + '%';
+  fill.classList.toggle('done', allDone);
+  // The meta line nudges the learner toward the final quiz (Feature 2) once
+  // all lessons are done; until then it shows how many remain.
+  const meta = el('cp-meta');
+  if(allDone){
+    meta.innerHTML = 'Every lesson is complete. <span class="cp-badge">Ready for the final quiz</span>';
+  } else if(total === 0){
+    meta.textContent = 'No lessons yet — add one from the sidebar.';
+  } else {
+    const remaining = total - done;
+    meta.innerHTML = remaining + (remaining===1 ? ' lesson left' : ' lessons left') + ' before the final quiz unlocks. <span class="cp-badge muted">Final quiz locked</span>';
+  }
+  // Feature 2 — render the Final Quiz button row (gated by lesson completion).
+  // Backend enforces this too (403), so the disabled state here is just UX.
+  renderFinalQuizButtonRow(course, allDone);
+}
+
+/* ========================================================================
+   Feature 2 — Final quiz (20 marks) + AI performance analysis (frontend)
+   ========================================================================
+   State:
+     fqState = null  -> modal closed
+     fqState = {mode:'taking', quiz, answers:[int|null], ...}  -> taking
+     fqState = {mode:'results', result, ...}  -> reviewing a graded attempt
+   The quiz questions never contain correct answers; the server grades on
+   submit and returns the full review + analysis in one response.
+   ------------------------------------------------------------------------ */
+let fqState = null;
+
+function renderFinalQuizButtonRow(course, allDone){
+  const row = el('final-quiz-btn-row');
+  if(!row) return;
+  // Fetch the user's best score so we can show a chip if they've attempted
+  // the final quiz before. Best-effort — if it fails, just skip the chip.
+  // We only fetch once per renderCourseView() call; the chip is optional chrome.
+  row.innerHTML = '';
+  if(!course) return;
+
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-primary';
+  btn.innerHTML = '📝 Final Quiz';
+  btn.id = 'open-final-quiz-btn';
+  if(!allDone){
+    btn.disabled = true;
+    btn.title = 'Complete all lessons to unlock the final quiz';
+  }
+  row.appendChild(btn);
+
+  const note = document.createElement('span');
+  note.className = 'locked-note';
+  if(allDone){
+    note.innerHTML = '20 questions · 1 mark each · pass mark <strong>10/20</strong>';
+  } else {
+    const mods = (course.modules || []);
+    const done = mods.filter(m=>m.completed).length;
+    note.innerHTML = '🔒 Complete all ' + mods.length + ' lessons to unlock (' + done + ' done)';
+  }
+  row.appendChild(note);
+
+  // Best score chip (loaded async, appended when ready)
+  if(allDone){
+    api('/courses/' + course.id + '/final-quiz/attempts').then(data=>{
+      if(data && data.best_score != null){
+        const chip = document.createElement('span');
+        chip.className = 'best-score-chip';
+        chip.textContent = 'Best: ' + data.best_score + '/' + (data.attempts[0]?.total || 20);
+        row.appendChild(chip);
+      }
+    }).catch(()=>{ /* best-effort */ });
+  }
+
+  btn.addEventListener('click', ()=>{
+    if(!allDone) return;
+    openFinalQuiz(course);
+  });
+}
+
+/* Open the final quiz modal. If a stored quiz exists, jump straight to
+   taking it; otherwise generate one first. */
+async function openFinalQuiz(course){
+  el('fq-modal').classList.remove('hidden');
+  el('fq-body').innerHTML = '<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Loading your final quiz…</div>';
+  el('fq-foot').innerHTML = '';
+  el('fq-counter').textContent = '';
+  el('fq-progress-fill').style.width = '0%';
+  el('fq-title').textContent = 'Final quiz — ' + (course.title || '');
+
+  let quiz = null;
+  try{
+    quiz = await api('/courses/' + course.id + '/final-quiz');
+  }catch(err){
+    if(err.message && err.message.includes('No final quiz generated')){
+      // None stored yet — generate one now
+      try{
+        quiz = await api('/courses/' + course.id + '/final-quiz', { method:'POST' });
+      }catch(genErr){
+        el('fq-body').innerHTML = '<div class="form-error">Could not generate the final quiz: ' + escapeHTML(genErr.message) + '</div>';
+        return;
+      }
+    } else {
+      // Locked (403) or other error
+      el('fq-body').innerHTML = '<div class="form-error">' + escapeHTML(err.message) + '</div>';
+      return;
+    }
+  }
+  startFinalQuizTaking(course, quiz);
+}
+
+function startFinalQuizTaking(course, quiz){
+  fqState = {
+    mode: 'taking',
+    course: course,
+    quiz: quiz,
+    answers: new Array(quiz.questions.length).fill(null),
+  };
+  renderFinalQuizTaking();
+}
+
+function renderFinalQuizTaking(){
+  const s = fqState;
+  if(!s || s.mode !== 'taking') return;
+  const quiz = s.quiz;
+  const total = quiz.questions.length;
+
+  // Header
+  el('fq-title').textContent = 'Final quiz — ' + (s.course.title || '');
+  const answered = s.answers.filter(a=>a !== null).length;
+  el('fq-counter').textContent = answered + ' / ' + total + ' answered';
+  el('fq-progress-fill').style.width = (total ? Math.round(answered/total*100) : 0) + '%';
+
+  // Body — scrollable list of all questions
+  const body = el('fq-body');
+  body.innerHTML = quiz.questions.map((q, qi)=>{
+    const letter = (i)=> String.fromCharCode(65 + i);  // A,B,C,D
+    const opts = q.options.map((opt, oi)=>{
+      const sel = s.answers[qi] === oi;
+      return `<label class="fq-opt${sel ? ' selected' : ''}" data-q="${qi}" data-o="${oi}">
+        <span class="fq-opt-letter">${letter(oi)}</span>
+        <span>${escapeHTML(opt)}</span>
+        <input type="radio" name="fq-${qi}" value="${oi}" ${sel ? 'checked' : ''}>
+      </label>`;
+    }).join('');
+    return `<div class="fq-q difficulty-${escapeAttr(q.difficulty || 'medium')}">
+      <div class="fq-q-num">Question ${qi + 1} of ${total}</div>
+      <div class="fq-q-topic">${escapeHTML(q.topic)} · ${escapeHTML(q.difficulty || 'medium')}</div>
+      <div class="fq-q-text">${escapeHTML(q.question)}</div>
+      ${opts}
+    </div>`;
+  }).join('');
+
+  // Wire up option clicks (clicking a label selects that option)
+  body.querySelectorAll('.fq-opt').forEach(label=>{
+    label.addEventListener('click', (e)=>{
+      e.preventDefault();
+      const qi = parseInt(label.dataset.q);
+      const oi = parseInt(label.dataset.o);
+      s.answers[qi] = oi;
+      // Update just this question's UI without a full re-render for snappiness
+      label.parentElement.querySelectorAll('.fq-opt').forEach(l=>l.classList.remove('selected'));
+      label.classList.add('selected');
+      label.querySelector('input').checked = true;
+      // Update header counter + progress
+      const answered = s.answers.filter(a=>a !== null).length;
+      el('fq-counter').textContent = answered + ' / ' + total + ' answered';
+      el('fq-progress-fill').style.width = Math.round(answered/total*100) + '%';
+      el('fq-unanswered') && updateFqUnansweredCount();
+    });
+  });
+
+  // Footer — submit button + unanswered count
+  const foot = el('fq-foot');
+  const unanswered = total - s.answers.filter(a=>a !== null).length;
+  foot.innerHTML = `
+    <span class="fq-unanswered${unanswered > 0 ? ' warn' : ''}" id="fq-unanswered">
+      ${unanswered === 0 ? 'All questions answered.' : unanswered + (unanswered===1 ? ' question' : ' questions') + ' unanswered'}
+    </span>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-ghost btn-sm" id="fq-cancel-take">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="fq-submit-btn">Submit quiz</button>
+    </div>
+  `;
+  el('fq-cancel-take').addEventListener('click', closeFinalQuiz);
+  el('fq-submit-btn').addEventListener('click', ()=>{
+    const remaining = total - s.answers.filter(a=>a !== null).length;
+    if(remaining > 0){
+      if(!confirm('You have ' + remaining + (remaining===1 ? ' question' : ' questions') + ' unanswered. Submit anyway?')){
+        return;
+      }
+    } else {
+      if(!confirm('Submit your final quiz? You can retake it later, but this attempt will be recorded.')){
+        return;
+      }
+    }
+    submitFinalQuiz();
+  });
+}
+
+function updateFqUnansweredCount(){
+  const s = fqState;
+  if(!s || s.mode !== 'taking') return;
+  const total = s.quiz.questions.length;
+  const unanswered = total - s.answers.filter(a=>a !== null).length;
+  const el2 = el('fq-unanswered');
+  if(!el2) return;
+  el2.classList.toggle('warn', unanswered > 0);
+  el2.textContent = unanswered === 0 ? 'All questions answered.' :
+    unanswered + (unanswered===1 ? ' question' : ' questions') + ' unanswered';
+}
+
+async function submitFinalQuiz(){
+  const s = fqState;
+  if(!s || s.mode !== 'taking') return;
+  const course = s.course;
+  const btn = el('fq-submit-btn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Grading…'; }
+  el('fq-body').insertAdjacentHTML('afterbegin',
+    '<div class="gen-status" id="fq-grading" style="color:var(--muted);"><span class="spinner-dot"></span> Grading your answers and writing your analysis…</div>');
+  try{
+    const result = await api('/courses/' + course.id + '/final-quiz/submit', {
+      method:'POST', body:{ answers: s.answers }
+    });
+    // Apply engagement side effects (XP, badges) using the existing helper
+    applyMeStatsSafe({
+      xp: result.xp, level: result.level,
+      streak_count: result.streak_count, badges: result.badges,
+    });
+    (result.new_badges || []).forEach(id=>{
+      const meta = BADGE_CATALOG.find(b=>b.id===id);
+      if(meta) toast(meta.icon, 'Badge earned: ' + meta.name + '!');
+    });
+    fqState = { mode:'results', course: course, result: result };
+    renderFinalQuizResults();
+    // Refresh the dashboard summary so the course moves to Completed (Feature 4)
+    loadCourses().then(()=>{ /* renderCourseGrid only needed if on dashboard */ });
+    // Refresh the course-progress / final-quiz button row in the course view
+    const c = currentCourse();
+    if(c && c.id === course.id){
+      // Pull the fresh course so the button row shows the new best score
+      try{
+        activeCourse = await api('/courses/' + course.id);
+        renderCourseProgress(activeCourse);
+      }catch(e){ /* best-effort */ }
+    }
+  }catch(err){
+    const g = el('fq-grading'); if(g) g.remove();
+    if(btn){ btn.disabled = false; btn.textContent = 'Submit quiz'; }
+    alert('Could not submit the quiz: ' + err.message);
+  }
+}
+
+function renderFinalQuizResults(){
+  const s = fqState;
+  if(!s || s.mode !== 'results') return;
+  const r = s.result;
+  const analysis = r.analysis || {};
+  const total = r.total || 20;
+
+  el('fq-title').textContent = 'Final quiz results — ' + (s.course.title || '');
+  el('fq-counter').textContent = '';
+  el('fq-progress-fill').style.width = '100%';
+
+  // Big score block + pass/fail badge
+  const pct = r.percentage != null ? r.percentage : Math.round(r.score / total * 100);
+  const badge = r.passed
+    ? '<span class="fq-result-badge pass">✓ PASSED</span>'
+    : '<span class="fq-result-badge fail">✗ Did not pass</span>';
+  let html = `
+    <div class="fq-result-score">
+      <div class="fq-big-score">${r.score}<span class="total">/${total}</span></div>
+      <div>
+        <div class="fq-pct">${pct}%</div>
+        <div style="margin-top:6px;">${badge}</div>
+      </div>
+      <div style="margin-left:auto;font-size:12.5px;color:var(--muted);text-align:right;">
+        Pass mark: ${r.passed ? '≥' : ''}10/20<br>
+        ${r.best_score != null ? 'Best: ' + r.best_score + '/' + total : 'No passing attempt yet'}
+      </div>
+    </div>
+  `;
+
+  // Per-topic breakdown bars
+  if(r.topic_breakdown && r.topic_breakdown.length){
+    html += '<div class="fq-result-section"><h4>Performance by topic</h4><div class="fq-topic-bars">';
+    r.topic_breakdown.forEach(t=>{
+      const tpct = t.pct != null ? t.pct : (t.total ? Math.round(t.correct/t.total*100) : 0);
+      const cls = tpct >= 70 ? 'pass' : (tpct < 50 ? 'weak' : '');
+      html += `<div class="fq-topic-bar">
+        <span class="fq-tb-label" title="${escapeAttr(t.topic)}">${escapeHTML(t.topic)}</span>
+        <div class="fq-tb-track"><div class="fq-tb-fill ${cls}" style="width:${tpct}%"></div></div>
+        <span class="fq-tb-pct">${t.correct}/${t.total} · ${tpct}%</span>
+      </div>`;
+    });
+    html += '</div></div>';
+  }
+
+  // AI summary
+  if(analysis.summary){
+    html += '<div class="fq-result-section"><h4>Summary</h4><p style="font-size:14px;line-height:1.6;color:var(--ink);">' + escapeHTML(analysis.summary) + '</p></div>';
+  }
+
+  // Strengths / weaknesses / advice
+  const renderList = (title, items, keyName) => {
+    if(!items || !items.length) return '';
+    return `<div class="fq-result-section"><h4>${escapeHTML(title)}</h4>` +
+      items.map(it=>{
+        const topic = escapeHTML(it.topic || '');
+        const body = escapeHTML(it[keyName] || '');
+        return `<div class="fq-list-item"><div class="fq-li-topic">${topic}</div><div>${body}</div></div>`;
+      }).join('') + '</div>';
+  };
+  html += renderList('Strengths', analysis.strengths, 'comment');
+  html += renderList('Weaknesses', analysis.weaknesses, 'comment');
+  html += renderList('Advice', analysis.advice, 'action');
+
+  if(analysis.next_steps){
+    html += '<div class="fq-result-section"><h4>Next steps</h4><p style="font-size:14px;line-height:1.6;color:var(--ink);">' + escapeHTML(analysis.next_steps) + '</p></div>';
+  }
+
+  // Per-question review
+  if(r.review && r.review.length){
+    html += '<div class="fq-result-section"><h4>Review</h4>';
+    r.review.forEach((rv, i)=>{
+      const cls = rv.your_index === null ? 'skipped' : (rv.is_correct ? 'correct' : 'incorrect');
+      const opts = rv.options || [];
+      const yourTxt = rv.your_index !== null && rv.your_index < opts.length ? opts[rv.your_index] : '(no answer)';
+      const correctTxt = rv.correct_index < opts.length ? opts[rv.correct_index] : '(unknown)';
+      html += `<div class="fq-review-q ${cls}">
+        <div class="fq-rv-q">${i+1}. ${escapeHTML(rv.question)}</div>
+        <div class="fq-rv-ans"><span class="your">Your answer:</span> ${escapeHTML(yourTxt)}</div>
+        <div class="fq-rv-ans"><span class="correct">Correct answer:</span> ${escapeHTML(correctTxt)}</div>
+        ${rv.explanation ? '<div class="fq-rv-explain">' + escapeHTML(rv.explanation) + '</div>' : ''}
+      </div>`;
+    });
+    html += '</div>';
+  }
+
+  // Action buttons
+  html += '<div class="fq-actions-row">';
+  html += '<button class="btn btn-ghost btn-sm" id="fq-retake-btn">↻ Retake quiz</button>';
+  html += '<button class="btn btn-ghost btn-sm" id="fq-back-to-course-btn">← Back to course</button>';
+  if(r.passed){
+    html += '<button class="btn btn-primary btn-sm" id="fq-get-cert-btn">🏆 Get certificate</button>';
+  } else {
+    html += '<span style="font-size:12.5px;color:var(--muted);align-self:center;">Pass the quiz (≥10/20) to unlock the certificate.</span>';
+  }
+  html += '</div>';
+
+  el('fq-body').innerHTML = html;
+  el('fq-foot').innerHTML = '';  // actions are inside body for the results screen
+
+  el('fq-retake-btn').addEventListener('click', retakeFinalQuiz);
+  el('fq-back-to-course-btn').addEventListener('click', closeFinalQuiz);
+  if(r.passed && el('fq-get-cert-btn')){
+    el('fq-get-cert-btn').addEventListener('click', ()=>{
+      // Feature 3 — navigate to the certificate view, which issues the
+      // certificate on first request (POST) and renders it for download.
+      closeFinalQuiz();
+      openCertificate(s.course.id);
+    });
+  }
+}
+
+async function retakeFinalQuiz(){
+  const s = fqState;
+  if(!s || !s.course) return;
+  el('fq-body').innerHTML = '<div class="gen-status" style="color:var(--muted);"><span class="spinner-dot"></span> Writing a fresh quiz for you…</div>';
+  el('fq-foot').innerHTML = '';
+  el('fq-counter').textContent = '';
+  el('fq-progress-fill').style.width = '0%';
+  try{
+    const quiz = await api('/courses/' + s.course.id + '/final-quiz/retake', { method:'POST' });
+    startFinalQuizTaking(s.course, quiz);
+  }catch(err){
+    el('fq-body').innerHTML = '<div class="form-error">Could not generate a new quiz: ' + escapeHTML(err.message) + '</div>';
+  }
+}
+
+function closeFinalQuiz(){
+  fqState = null;
+  el('fq-modal').classList.add('hidden');
+  el('fq-body').innerHTML = '';
+  el('fq-foot').innerHTML = '';
+}
+
+el('fq-close').addEventListener('click', closeFinalQuiz);
+el('fq-modal').addEventListener('click', (e)=>{
+  if(e.target.id === 'fq-modal') closeFinalQuiz();
+});
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'Escape' && !el('fq-modal').classList.contains('hidden')){
+    closeFinalQuiz();
+  }
+});
 
 /* ---- Module rail ---- */
 function renderModuleRail(course){
