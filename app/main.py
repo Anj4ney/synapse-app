@@ -35,6 +35,7 @@ app.include_router(auth.router)
 app.include_router(courses.router)
 app.include_router(courses.notes_router)   # /api/notes/... (personal notes, Feature 7)
 app.include_router(courses.shared_router)  # /api/shared/... (public read-only view, Feature 12)
+app.include_router(courses.certificates_router)  # /api/certificates (Feature 3)
 app.include_router(leaderboard.router)     # /api/leaderboard (Feature 13)
 
 
