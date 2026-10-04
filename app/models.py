@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -57,3 +57,91 @@ class Note(Base):
     module_index = Column(Integer, nullable=False)
     text = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class FinalQuiz(Base):
+    """Feature 2 — the 20-mark end-of-course quiz, stored so a page refresh
+    does not create a different quiz. One row per (user, course); a "retake"
+    replaces this row with a freshly generated quiz (attempts are preserved
+    separately in QuizAttempt).
+
+    The quiz is split into two JSON columns for an explicit security boundary:
+      - questions_json: list of {question, options:[str x4], topic, difficulty}
+        — safe to send to the browser.
+      - answers_json: list of {correct_index (0-3), explanation, topic,
+        difficulty} — server-side ONLY, never sent to the browser before the
+        quiz is submitted. Used to grade answers server-side.
+    Both lists are parallel (same length, same order)."""
+    __tablename__ = "final_quizzes"
+    __table_args__ = (
+        UniqueConstraint("user_id", "course_id", name="uq_final_quiz_user_course"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    # List of {question, options, topic, difficulty} — safe to send to browser
+    questions_json = Column(JSON, nullable=False, default=list)
+    # List of {correct_index, explanation, topic, difficulty} — server-only
+    answers_json = Column(JSON, nullable=False, default=list)
+    total = Column(Integer, nullable=False, default=20)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class QuizAttempt(Base):
+    """Feature 2 — every attempt at a course's final quiz. Stored separately
+    from FinalQuiz so retakes (which replace FinalQuiz) never lose history.
+    The best passing score across all attempts is what unlocks the certificate
+    and what `is_course_completed()` checks.
+
+    Fields:
+      - score / total / percentage / passed: grading summary
+      - answers_json: the user's submitted answers (list of int|null, parallel
+        to FinalQuiz.questions_json at submit time — captured here so a later
+        retake that replaces the quiz doesn't make this attempt unreplayable)
+      - topic_breakdown_json: {topic: {correct, total, pct}} per lesson
+      - analysis_json: the AI-generated {summary, strengths, weaknesses, advice,
+        next_steps} (or the rule-based fallback if Gemini failed)
+    """
+    __tablename__ = "quiz_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    total = Column(Integer, nullable=False, default=20)
+    percentage = Column(Float, nullable=False, default=0.0)
+    passed = Column(Boolean, nullable=False, default=False)
+    answers_json = Column(JSON, nullable=False, default=list)
+    topic_breakdown_json = Column(JSON, nullable=False, default=dict)
+    analysis_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Certificate(Base):
+    """Feature 3 — Certificate of Completion. One row per (user, course),
+    created the first time the user requests it after passing the final quiz.
+    Re-issued requests return the SAME row (the unique constraint below
+    prevents duplicates). Stored server-side so the certificate code can be
+    verified independently of the frontend.
+
+    Fields:
+      - certificate_code: short, unique, shareable id (SYN-XXXXXX). Generated
+        once, never reused.
+      - score / percentage: snapshot of the user's best passing final-quiz
+        score at issue time, so the certificate always shows the score that
+        actually earned it even if the user later retakes and scores lower.
+      - issued_at: when the certificate was first issued.
+    """
+    __tablename__ = "certificates"
+    __table_args__ = (
+        UniqueConstraint("user_id", "course_id", name="uq_certificate_user_course"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    certificate_code = Column(String(32), unique=True, nullable=False, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    percentage = Column(Float, nullable=False, default=0.0)
+    issued_at = Column(DateTime(timezone=True), server_default=func.now())
