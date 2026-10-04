@@ -336,7 +336,7 @@
   }
   /* Completed card: gold border + a 'Completed' ribbon */
   .course-card.completed{
-    border-color:var(--gold);background:linear-gradient(135deg,var(--paper-2) 0%,#FFFBF1 100%);
+    border-color:var(--gold);background:linear-gradient(135deg,var(--paper-2) 0%,var(--completed-tint,#FFFBF1) 100%);
   }
   .course-card.completed .cc-completed-badge{
     display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
@@ -353,6 +353,11 @@
     border-radius:8px;padding:6px 12px;cursor:pointer;transition:background .12s ease;
   }
   .course-card .cc-view-cert:hover{background:#FBF3E6;}
+  .course-card .cc-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .card-footer.is-completed{flex-direction:column;align-items:stretch;gap:12px;}
+  .card-footer.is-completed .cc-actions{justify-content:space-between;flex-wrap:nowrap !important;gap:8px !important;}
+  .card-footer.is-completed .cc-view-cert{flex:1;text-align:center;white-space:nowrap;}
+  .card-footer.is-completed .btn-sm{white-space:nowrap;}
 
   /* COURSE VIEW */
   .course-wrap{max-width:1120px;margin:0 auto;padding:32px 28px 80px;}
@@ -736,6 +741,8 @@
   html[data-theme="dark"] .fq-result-badge.pass{background:rgba(76,192,131,0.16);color:#7FE0AB;}
   html[data-theme="dark"] .fq-result-badge.fail{background:rgba(224,103,76,0.16);color:#F4A593;}
   html[data-theme="dark"] .fq-list-item .fq-li-topic{color:var(--gold-2);}
+  html[data-theme="dark"]{--completed-tint:#2A2340;}
+  html[data-theme="dark"] .course-card.completed .cc-view-cert{color:#F2B65C;}
   html[data-theme="dark"] .course-card .cc-final-score,
   html[data-theme="dark"] .cert-code{background:#3A2F16;color:#FFF3DA;}
   html[data-theme="dark"] .course-card .cc-view-cert:hover{background:#2A2340;}
@@ -1910,15 +1917,14 @@ function renderCourseSection(sectionKey, courses, isCompletedSection){
     // Feature 4 — completed cards show the final score + a View Certificate button
     // instead of just the progress bar.
     let footerExtras = '';
+    let scoreChip = '';
     if(course.is_completed){
       const score = course.final_score != null ? course.final_score : '?';
       const total = 20;  // FINAL_QUIZ_TOTAL
       const pctScore = (course.final_score != null && total)
         ? Math.round(course.final_score / total * 100) : 0;
-      footerExtras = `
-        <span class="cc-final-score" title="Best final-quiz score">🏆 ${score}/${total}<span class="pct">· ${pctScore}%</span></span>
-        <button class="cc-view-cert" data-cert="${course.id}">View Certificate</button>
-      `;
+      footerExtras = `<button class="cc-view-cert" data-cert="${course.id}">🎓 View Certificate</button>`;
+      scoreChip = `<span class="cc-final-score" title="Best final-quiz score">🏆 ${score}/${total}<span class="pct">· ${pctScore}%</span></span>`;
     }
 
     card.innerHTML = `
@@ -1928,9 +1934,9 @@ function renderCourseSection(sectionKey, courses, isCompletedSection){
       </div>
       <p>${escapeHTML(course.description||'')}</p>
       <div class="progress-track"><div class="progress-fill${course.is_completed ? '' : ''}" style="width:${pct}%"></div></div>
-      <div class="card-footer">
-        <span class="count-badge">${course.lesson_count} lessons · ${pct}%</span>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <div class="card-footer${course.is_completed ? ' is-completed' : ''}">
+        <div class="cc-meta"><span class="count-badge">${course.lesson_count} lessons · ${pct}%</span>${scoreChip}</div>
+        <div class="cc-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           ${footerExtras}
           <button class="icon-btn" data-del="${course.id}">Remove</button>
           <button class="btn btn-sm btn-ghost" data-open="${course.id}">Open →</button>
